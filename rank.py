@@ -93,34 +93,70 @@ def generate_reasoning(candidate, rank, score, features):
     resp_rate = int(signals.get("recruiter_response_rate", 0.0) * 100)
     
     # Set seed based on candidate ID to keep reasoning generation deterministic per candidate
-    # (Important for reproducible and consistent tie-break checks)
     random.seed(candidate.get("candidate_id"))
     
-    # Generate based on rank band to maintain rank consistency
-    if rank <= 10:
-        templates = [
-            f"Outstanding {title} with {years} years experience. Expert in {skills} with strong Git engagement ({github_score} score) and immediately available in {location}.",
-            f"Founding-grade AI engineer with {years} years of experience; possesses deep expertise in {skills} and matches the shipping attitude with a {notice}-day notice.",
-            f"Exceptional match: {title} with {years} years of active engineering history. Expert in {skills}; Pune/Noida local with {notice}-day notice period; highly responsive on platform."
-        ]
-        text = random.choice(templates)
-    elif rank <= 50:
-        templates = [
-            f"Highly qualified {title} with {years} years experience. Strong background in {skills} with good platform activity, located in {location} ({notice}-day notice).",
-            f"Experienced engineer with {years} years in ML/AI systems. Strong skills in {skills} and active builder metrics (GitHub: {github_score}). Notice period is {notice} days.",
-            f"Solid background as {title} for {years} years. Demonstrates hands-on proficiency in {skills} and high recruiter response rate of {resp_rate}%."
-        ]
-        text = random.choice(templates)
-    else:  # Ranks 51-100 (acknowledge gaps/filler tone)
-        templates = [
-            f"Backend developer with {years} years experience and adjacent skills in {skills}. Acknowledged concern: notice period is {notice} days, requires relocation.",
-            f"Software engineer with {years} years experience. Shows skills in {skills} but has low recent activity or notice period of {notice} days.",
-            f"Adjacent profile ({title}) with {years} years experience. Includes core skills in {skills} but note relocation needs from {location}."
-        ]
-        text = random.choice(templates)
+    # Sentence 1: Profile Overview
+    s1_opts = [
+        f"This candidate is a {title} bringing {years} years of experience to the table.",
+        f"Currently employed as a {title}, they possess a solid {years} years of active engineering history.",
+        f"An experienced {title} with {years} years under their belt.",
+        f"Working as a {title}, this applicant has {years} years of professional background."
+    ]
+    
+    # Sentence 2: Skills
+    s2_opts = [
+        f"Their technical stack heavily features {skills}.",
+        f"They demonstrate deep expertise across {skills}.",
+        f"Core competencies include {skills}.",
+        f"A strong background in {skills} makes them a relevant fit."
+    ]
+    
+    # Nuance/Concerns based on facts
+    nuances = []
+    
+    # Location nuance (JD connection & Honest concerns)
+    loc_lower = location.lower()
+    if "pune" in loc_lower or "noida" in loc_lower:
+        nuances.append(f"Being local to {location} is a significant advantage for the hybrid model.")
+    else:
+        nuances.append(f"Located in {location}, they would require relocation to the Pune or Noida office.")
         
+    # Notice period nuance
+    if notice <= 30:
+        nuances.append(f"A short {notice}-day notice period means they can join the founding team quickly.")
+    elif notice >= 60:
+        nuances.append(f"A potential concern is the extended {notice}-day notice period.")
+    else:
+        nuances.append(f"They carry a standard notice period of {notice} days.")
+        
+    # GitHub nuance
+    if github_score > 50:
+        nuances.append(f"Their high GitHub activity score ({github_score}) shows strong open-source engagement.")
+    elif github_score == 0:
+        nuances.append("Lack of visible GitHub activity makes it harder to assess coding habits offline.")
+        
+    # Response rate nuance
+    if resp_rate > 80:
+        nuances.append(f"They are highly responsive on the platform ({resp_rate}% response rate).")
+        
+    # Pick one or two nuances to keep it 1-3 sentences total
+    chosen_nuances = random.sample(nuances, min(len(nuances), 2))
+    
+    # Construct final text
+    s1 = random.choice(s1_opts)
+    s2 = random.choice(s2_opts)
+    
+    parts = [s1, s2] + chosen_nuances
+    
+    # Rank Consistency check (Rule 89)
+    if rank > 60:
+        parts.insert(0, "While their profile shows some relevant adjacent skills, there are notable gaps or lower signal matches compared to top-tier candidates.")
+    elif rank > 30:
+        parts.insert(0, "A solid middle-tier match.")
+    
+    reasoning = " ".join(parts)
     # Clean newlines/carriage returns (Strict Single-Line Constraint)
-    clean_text = text.replace("\n", " ").replace("\r", " ").replace('"', "'").strip()
+    clean_text = reasoning.replace("\n", " ").replace("\r", " ").replace('"', "'").strip()
     return clean_text
 
 logger = offline_utils.setup_logging("rank")
