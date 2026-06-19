@@ -11,7 +11,7 @@ __pycache__/
 *.pyd
 
 # Large Data & Artifacts
-[PUB] India_runs_data_and_ai_challenge/
+\[PUB\] India_runs_data_and_ai_challenge/
 artifacts/qdrant_index/
 artifacts/features.json
 artifacts/bge_model/
