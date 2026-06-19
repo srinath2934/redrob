@@ -9,38 +9,51 @@ This document details the system design, processing stages, and mathematical for
 The ranking pipeline operates as a **lightweight pre-computed similarity and features matcher**. To satisfy the 5-minute compute budget on CPU without internet access or running external database servers, all heavy operations are completed in the pre-computation phase. During the ranking step, the system performs fast vector retrieval using NumPy dot products, applies safety filters, scores candidates using a multi-factor hybrid formula, and resolves ties deterministically.
 
 ```
-       [Raw Candidates (100K JSONL)]
-                     │
-                     ▼ (Pre-computation Phase - Run Once)
-           ┌─────────────────────┐
-           │ 1. Feature Prep     │ ──> Computes scores, flags fakes & service-only
-           └──────────┬──────────┘
-                     │
-                     ▼
-           ┌─────────────────────┐
-           │ 2. BGE Embedding    │ ──> Generates BGE vectors for all 100K candidates
-           └──────────┬──────────┘
-                     │
-                     ▼
-           ┌─────────────────────┐
-           │ 3. Save Cache files │ ──> Saves embeddings.npy & features.json to disk
-           └─────────────────────┘
+         [Raw Candidates (100K JSONL)]
+                       │
+                       ▼ (Pre-computation Phase - Run Once)
+             ┌──────────────────────┐
+             │ 1.1-1.2 Feature Prep │ ──> Computes scores, flags fakes & service-only
+             └──────────┬───────────┘
+                       │
+                       ▼
+             ┌──────────────────────┐
+             │ 1.3 BGE Embedding    │ ──> Generates BGE vectors for all 100K candidates
+             └──────────┬───────────┘
+                       │
+                       ▼
+             ┌──────────────────────┐
+             │ 1.4 Save Cache files │ ──> Saves embeddings.npy & features.json to disk
+             └──────────────────────┘
 
-                     │
-                     ▼ (Ranking Step - 5 min Clock)
-           ┌─────────────────────┐
-           │ 4. Similarity calc  │ ──> Encodes JD; calculates Cosine Similarity
-           │                     │     via NumPy Dot Product (np.dot)
-           └──────────┬──────────┘
-                     │
-                     ▼
-           ┌─────────────────────┐
-           │ 5. Hard Exclusions  │ ──> Prunes Honeypots & IT-Service-Only
-           └──────────┬──────────┘
-                     │
-                     ▼
-           ┌─────────────────────┐
-           │ 6. Hybrid Scoring   │ ──> Title (35%) + Semantic (25%) +
+                       │
+                       ▼ (Ranking Step - 5 min Clock)
+             ┌──────────────────────┐
+             │ 2.3-2.5 Similarity   │ ──> Encodes JD; calculates Cosine Similarity
+             │                      │     via NumPy Dot Product (np.dot)
+             └──────────┬───────────┘
+                       │
+                       ▼
+             ┌──────────────────────┐
+             │ 2.7 Hard Exclusions  │ ──> Prunes Honeypots & IT-Service-Only
+             └──────────┬───────────┘
+                       │
+                       ▼
+             ┌──────────────────────┐
+             │ 2.9 Hybrid Scoring   │ ──> Title (35%) + Semantic (25%) +
+             │                      │     Skill/Exp (20%) + Behavioral (20%)
+             └──────────┬───────────┘
+                       │
+                       ▼
+             ┌──────────────────────┐
+             │ 2.12 Tie-Breaking    │ ──> Deterministic Candidate ID ascending
+             └──────────┬───────────┘
+                       │
+                       ▼
+             ┌──────────────────────┐
+             │ 2.15 Export Top 100  │ ──> Writes ranked output CSV (with offline reasoning)
+             └──────────────────────┘
+```      │ 6. Hybrid Scoring   │ ──> Title (35%) + Semantic (25%) +
            │                     │     Skill/Exp (20%) + Behavioral (20%)
            └──────────┬──────────┘
                      │
@@ -112,7 +125,7 @@ All pipeline components write timestamped log entries to `artifacts/logs/pipelin
 
 ---
 
-## 5. Stage 1: Safety Filters (Honeypot & IT-Service Exclusions)
+## 5. Stage 2.7: Safety Filters (Honeypot & IT-Service Exclusions)
 
 To protect the ranking from disqualified candidates and meet the honeypot threshold limit ($<10\%$ in the top 100), the system evaluates each candidate against safety checkers. If a candidate triggers any of these checkers, they are assigned a score of `0` and immediately pruned.
 
@@ -134,7 +147,7 @@ The Job Description explicitly disqualifies candidates who have *only* worked at
 
 ---
 
-## 6. Stage 2: Hybrid Scoring Formula
+## 6. Stage 2.9: Hybrid Scoring Formula
 
 For candidates passing the exclusions, we compute a final composite score:
 
@@ -181,7 +194,7 @@ $$S_{\text{behavioral}} = 0.30 \times S_{\text{github}} + 0.25 \times S_{\text{r
 
 ---
 
-## 7. Stage 3: Availability & Logistics Modifiers
+## 7. Stage 2.10: Availability & Logistics Modifiers
 
 The composite score is multiplied by logistics modifiers to prioritize local and readily hireable candidates:
 
@@ -201,7 +214,7 @@ $$\text{Final Score} = \text{Composite Score} \times M_{\text{notice}} \times M_
 
 ---
 
-## 8. Stage 4: Factual Offline Reasoning Generation
+## 8. Stage 2.15: Factual Offline Reasoning Generation
 
 To prevent network dependency and run 100% offline within the 5-minute limit, the pipeline uses a dynamic, rule-based reasoning generator to construct the `reasoning` column in the final output CSV. This generator builds 1-2 sentence descriptions using real candidate facts to satisfy all validation checks:
 
@@ -229,7 +242,7 @@ The tone and content of the reasoning are aligned with the assigned rank band:
 
 ---
 
-## 9. Stage 5: Deterministic Tie-Breaking & Bias Control
+## 9. Stage 2.12: Deterministic Tie-Breaking & Bias Control
 
 To satisfy challenge formatting requirements, candidate rankings must be monotonic and unique:
 1.  **Monotonicity**: Score at rank $i \ge$ score at rank $i+1$.
@@ -245,7 +258,7 @@ If two or more candidates have identical scores (or scores differing only within
 
 ---
 
-## 10. Sandbox (Streamlit / HuggingFace Spaces)
+## 10. Phase 3: Sandbox UI (Streamlit / HuggingFace Spaces)
 
 The sandbox is a hosted Streamlit web application (`app.py`) deployed on HuggingFace Spaces for judges to verify the ranking system works reproducibly.
 

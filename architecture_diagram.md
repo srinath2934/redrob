@@ -17,71 +17,71 @@ flowchart TD
     %% PRE-COMPUTATION PHASE
     %% ----------------------------------------------------
     subgraph Prep ["Pre-computation Phase (build_cache.py - Run Once)"]
-        A["Raw Candidates Pool: 100K JSONL"]:::prep --> B["Extract Features via offline_utils.py"]:::prep
-        B --> C["Honeypot & IT-Service Flags"]:::prep
-        B --> D["Title, Skills, Experience, Behavioral Scores"]:::prep
-        C --> F2["features.json"]:::prep
+        A["[1.1] Raw Candidates Pool: 100K JSONL"]:::prep --> B["[1.2] Extract Features via offline_utils.py"]:::prep
+        B --> C["[1.2.1] Honeypot & IT-Service Flags"]:::prep
+        B --> D["[1.2.2] Title, Skills, Exp, Behavioral Scores"]:::prep
+        C --> F2["[1.4.2] features.json (disk cache)"]:::prep
         D --> F2
-        A --> E["BGE Small Embedder (batch_size=256)"]:::prep
-        E --> F1["embeddings.npy (100K x 384)"]:::prep
-        B --> F3["candidate_ids.json"]:::prep
+        A --> E["[1.3] BGE Small Embedder (batch_size=256)"]:::prep
+        E --> F1["[1.4.1] embeddings.npy (100K x 384)"]:::prep
+        B --> F3["[1.4.3] candidate_ids.json"]:::prep
     end
 
     %% ----------------------------------------------------
     %% RANKING STEP
     %% ----------------------------------------------------
     subgraph Rank ["Ranking Step (rank.py - 5-Minute Clock)"]
-        G["Input: candidates.jsonl"]:::rank --> H{"All IDs in cache?"}:::decision
+        G["[2.1] Input: candidates.jsonl"]:::rank --> H{"[2.2] All IDs in cache?"}:::decision
 
         %% Cached Mode
-        H -- "Yes: CACHED MODE" --> I1["Load cache from RAM"]:::rank
-        I1 --> K1["Encode JD with BGE"]:::rank
-        K1 --> L1["Cosine Similarity via np.dot"]:::rank
-        L1 --> M1["Scored Candidate Pool"]:::rank
+        H -- "Yes: CACHED MODE" --> I1["[2.3A] Load cache from RAM"]:::rank
+        I1 --> K1["[2.4A] Encode JD with BGE"]:::rank
+        K1 --> L1["[2.5A] Cosine Similarity via np.dot"]:::rank
+        L1 --> M1["[2.6] Scored Candidate Pool"]:::rank
 
         %% Hybrid Dynamic Mode
-        H -- "No: HYBRID MODE" --> SEP["Split cached vs uncached"]:::rank
-        SEP --> CA["Cached: lookup features + embeddings"]:::rank
-        SEP --> UC["Uncached: embed on-the-fly + extract_all_features"]:::rank
-        CA --> MERGE["Merge scored sets"]:::rank
+        H -- "No: HYBRID MODE" --> SEP["[2.3B] Split cached vs uncached"]:::rank
+        SEP --> CA["[2.4B] Cached: lookup features + embeddings"]:::rank
+        SEP --> UC["[2.4C] Uncached: embed on-the-fly + extract features"]:::rank
+        CA --> MERGE["[2.5B] Merge scored sets"]:::rank
         UC --> MERGE
         MERGE --> M1
 
         %% Exclusions & Scoring
-        M1 --> N["Exclude Honeypots & IT-Service-Only"]:::filter
-        N --> EX["Log exclusion counts"]:::logging
-        EX --> O["Hybrid Score: 0.35T + 0.25S + 0.20SK + 0.20B"]:::rank
-        O --> MOD["Apply Notice & Location Modifiers"]:::rank
-        MOD --> P{"Score ties?"}:::decision
+        M1 --> N["[2.7] Exclude Honeypots & IT-Service-Only"]:::filter
+        N --> EX["[2.8] Log exclusion counts"]:::logging
+        EX --> O["[2.9] Hybrid Score: 0.35T + 0.25S + 0.20SK + 0.20B"]:::rank
+        O --> MOD["[2.10] Apply Notice & Location Modifiers"]:::rank
+        MOD --> P{"[2.11] Score ties?"}:::decision
 
         %% Tie-Breaking & Output
-        P -- "Yes" --> Q["Tie-break: candidate_id ascending"]:::filter
-        P -- "No" --> R["Sort by score descending"]:::rank
-        Q --> S["Assign unique ranks 1-100"]:::rank
+        P -- "Yes" --> Q["[2.12A] Tie-break: candidate_id ascending"]:::filter
+        P -- "No" --> R["[2.12B] Sort by score descending"]:::rank
+        Q --> S["[2.13] Assign unique ranks 1-100"]:::rank
         R --> S
-        S --> TOP5["Log Top 5 Candidates Preview"]:::logging
-        TOP5 --> T["Export team_redrob.csv with reasoning"]:::output
+        S --> TOP5["[2.14] Log Top 5 Candidates Preview"]:::logging
+        TOP5 --> T["[2.15] Export team_redrob.csv with reasoning"]:::output
     end
 
     %% ----------------------------------------------------
     %% SANDBOX UI
     %% ----------------------------------------------------
     subgraph Sandbox ["Sandbox UI (app.py - HuggingFace Spaces)"]
-        U1["Upload JSON/JSONL (max 100 candidates)"]:::sandbox --> U2["@st.cache_resource: Load Model + Cache"]:::sandbox
-        U2 --> U3["Hybrid Cache Lookup"]:::sandbox
-        U3 --> U4["Score & Rank"]:::sandbox
-        U4 --> U5["Generate reasoning (top 100 only)"]:::sandbox
-        U5 --> U6["Display Table + CSV Download"]:::sandbox
+        U1["[3.1] Upload JSON/JSONL (max 100)"]:::sandbox --> U2["[3.2] @st.cache_resource: Load Model + Cache"]:::sandbox
+        U2 --> U3["[3.3] Hybrid Cache Lookup"]:::sandbox
+        U3 --> U4["[3.4] Score & Rank"]:::sandbox
+        U4 --> U5["[3.5] Generate reasoning (top 100 only)"]:::sandbox
+        U5 --> U6["[3.6] Display Table + CSV Download"]:::sandbox
     end
 
     %% ----------------------------------------------------
     %% ORCHESTRATOR
     %% ----------------------------------------------------
     subgraph Orch ["Pipeline Orchestrator (run_pipeline.py)"]
-        O1["Verify Challenge Bundle"]:::logging --> O2["Ensure Cache Exists"]:::logging
-        O2 --> O3["Execute rank.py"]:::logging
-        O3 --> O4["Run validate_submission.py"]:::logging
-        O4 --> O5["Check submission_metadata.yaml"]:::logging
+        O1["[4.1] Verify Challenge Bundle"]:::logging --> O2["[4.2] Ensure Cache Exists"]:::logging
+        O2 --> O3["[4.3] Execute rank.py"]:::logging
+        O3 --> O4["[4.4] Run validate_submission.py"]:::logging
+        O4 --> O5["[4.5] Check submission_metadata.yaml"]:::logging
     end
 
     %% Phase Connections
