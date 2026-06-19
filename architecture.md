@@ -6,37 +6,59 @@ This document details the system design, processing stages, and mathematical for
 
 ## 1. High-Level Data Flow
 
-The ranking pipeline operates as a **relevance-availability cascade**, similar to search ranking architectures used at Google and Meta. Rather than scoring all candidates on all dimensions (which is computationally expensive and prone to noise), the system filters out invalid or highly unavailable candidates first, then performs deep scoring on the remaining high-potential pool.
+The ranking pipeline operates as a **hybrid search and scoring cascade**. To satisfy the 5-minute compute budget on CPU without internet access, heavy operations are completed offline. During the online phase, the system performs fast vector retrieval, applies safety filters, scores candidates using a multi-factor hybrid formula, and resolves ties deterministically.
 
 ```
        [Raw Candidates (100K JSONL)]
                      │
-                     ▼
-          ┌─────────────────────┐
-          │  1. Safety Filters  │ ──> Discards: Honeypots & IT-Service-Only
-          └──────────┬──────────┘
-                     │ (Remaining candidates: ~5K - 10K)
-                     ▼
-          ┌─────────────────────┐
-          │  2. Technical Fit   │ ──> Scores skills, titles, descriptions
-          └──────────┬──────────┘
+                     ▼ (Offline Phase)
+           ┌─────────────────────┐
+           │ 1. Feature Prep     │ ──> Computes scores, flags fakes & service-only
+           └──────────┬──────────┘
                      │
                      ▼
-          ┌─────────────────────┐
-          │  3. Availability    │ ──> Modifies scores by response rate,
-          └──────────┬──────────┘     notice period, location, recency
+           ┌─────────────────────┐
+           │ 2. BGE Embedding    │ ──> Generates BGE vectors for all 100K
+           └──────────┬──────────┘
                      │
                      ▼
-          ┌─────────────────────┐
-          │ 4. Sorting & Output │ ──> Deterministic tie-break, generates
-          └─────────────────────┘     reasoning, outputs top 100 CSV
+           ┌─────────────────────┐
+           │ 3. Qdrant Indexing  │ ──> Saves index with payloads to disk
+           └─────────────────────┘
+
+                     │
+                     ▼ (Online Ranking Phase - 5 min Clock)
+           ┌─────────────────────┐
+           │ 4. JD Vector Search │ ──> Encodes JD; retrieves Top 500 from Qdrant
+           └──────────┬──────────┘
+                     │
+                     ▼
+           ┌─────────────────────┐
+           │ 5. Hard Exclusions  │ ──> Prunes Honeypots & IT-Service-Only
+           └──────────┬──────────┘
+                     │
+                     ▼
+           ┌─────────────────────┐
+           │ 6. Hybrid Scoring   │ ──> Title (35%) + Semantic (25%) +
+           │                     │     Skill/Exp (20%) + Behavioral (20%)
+           └──────────┬──────────┘
+                     │
+                     ▼
+           ┌─────────────────────┐
+           │ 7. Tie-Breaking     │ ──> Deterministic Candidate ID ascending
+           └──────────┬──────────┘
+                     │
+                     ▼
+           ┌─────────────────────┐
+           │ 8. Export Top 100   │ ──> Writes ranked output CSV
+           └─────────────────────┘
 ```
 
 ---
 
 ## 2. Stage 1: Safety Filters (Honeypot & IT-Service Exclusions)
 
-To protect the ranking from disqualified candidates and meet the honeypot threshold limit ($<10\%$ in the top 100), the system evaluates each candidate against three safety checkers. If a candidate triggers any of these checkers, they are assigned a score of `0` and immediately pruned.
+To protect the ranking from disqualified candidates and meet the honeypot threshold limit ($<10\%$ in the top 100), the system evaluates each candidate against safety checkers. If a candidate triggers any of these checkers, they are assigned a score of `0` and immediately pruned.
 
 ### A. Honeypot Profiling Heuristics
 Honeypots are synthetic profiles designed with impossible data patterns. The system flags a profile as a honeypot if it triggers any of the following:
@@ -52,93 +74,87 @@ Honeypots are synthetic profiles designed with impossible data patterns. The sys
 The Job Description explicitly disqualifies candidates who have *only* worked at IT outsourcing/consulting firms. 
 *   **Definition of IT Service Firms**: `["TCS", "Infosys", "Wipro", "Accenture", "Cognizant", "Capgemini", "L&T", "Larsen & Toubro", "Tech Mahindra", "Mindtree", "HCL"]` (case-insensitive substring matches).
 *   **Rule**: If the candidate has $\ge 1$ job in their career history, and **every single job** is at one of these service firms, the candidate is disqualified.
-*   *Note*: If a candidate is currently at a service firm but has prior product-company experience (e.g. Acme Corp, Pied Piper, Stark Industries, Zomato, etc.), they remain in the pipeline.
+*   *Note*: If a candidate is currently at a service firm but has prior product-company experience, they remain in the pipeline.
 
 ---
 
-## 3. Stage 2: Technical & Experience Scoring (Relevance Fit)
+## 3. Stage 2: Hybrid Scoring Formula
 
-For candidates passing Stage 1, we compute a raw **Relevance Fit Score** ($S_{\text{fit}} \in [0, 100]$):
+For candidates passing the exclusions, we compute a final composite score:
 
-$$S_{\text{fit}} = 0.50 \times S_{\text{skills}} + 0.30 \times S_{\text{experience}} + 0.20 \times S_{\text{context}}$$
+$$\text{Final Score} = 0.35 \times S_{\text{title}} + 0.25 \times S_{\text{semantic}} + 0.20 \times S_{\text{skill\_depth}} + 0.20 \times S_{\text{behavioral}}$$
 
-### A. Technical Skills Score ($S_{\text{skills}}$)
-To avoid keyword-stuffers, we do not simply count matching terms. We verify skill presence and apply a **Skills Trust Modifier**:
-*   For each skill $s$ in the candidate's `skills` list, we define its raw weight $W_s$ based on keyword matching:
-    *   **Core Retrieval/Vector DBs (Weight = 1.0)**: Pinecone, Milvus, FAISS, Qdrant, Weaviate, BGE, E5, sentence-transformers, embeddings, vector search, hybrid search, dense retrieval.
-    *   **Ranking & Evaluation (Weight = 0.8)**: learning-to-rank, NDCG, MAP, MRR, ranking, hybrid search, Elasticsearch, FAISS.
+### A. Title Relevance Score ($S_{\text{title}}$)
+Weights candidate titles directly:
+*   **Target ML/AI Engineering Title**: Current title contains `"Machine Learning"`, `"ML"`, `"AI"`, `"Search"`, `"Ranking"`, or `"Retrieval"` $\rightarrow$ **100 points**.
+*   **Technical Pipeline Title**: Current title contains `"Software"`, `"Backend"`, or `"Data"` with ML exposure $\rightarrow$ **70 points**.
+*   **Trap Titles (Disqualified)**: Current title contains `"Marketing"`, `"Sales"`, `"Recruiter"`, `"HR"`, `"Operations"`, or `"Consultant"` $\rightarrow$ **0 points**.
+
+### B. Semantic Match Score ($S_{\text{semantic}}$)
+*   Cosine similarity between BGE Small encoded vector of the Job Description and BGE Small encoded vector of the candidate profile (headline + summary + career history descriptions).
+*   Normalized to a $[0, 100]$ scale.
+
+### C. Skill Depth & Experience Fit Score ($S_{\text{skill\_depth}}$)
+Calculated as:
+$$S_{\text{skill\_depth}} = 0.50 \times S_{\text{skills}} + 0.50 \times S_{\text{experience}}$$
+
+#### 1. Skill Fit ($S_{\text{skills}}$)
+*   We sum the weights of matched core skills:
+    *   **Core Retrieval/Vector DBs (Weight = 1.0)**: Pinecone, Milvus, FAISS, Qdrant, Weaviate, BGE, E5, vector search, dense retrieval.
+    *   **Ranking & Evaluation (Weight = 0.8)**: learning-to-rank, NDCG, MAP, MRR, ranking, hybrid search, Elasticsearch.
     *   **Applied ML/NLP (Weight = 0.5)**: NLP, machine learning, deep learning, PyTorch, HuggingFace, fine-tuning.
-*   **Trust Multiplier**:
-    $$T_s = \min\left(1.0, \frac{\text{duration\_months}}{12}\right) \times \left(1.0 + \log_{10}(1 + \text{endorsements})\right)$$
-*   **Proficiency Weight**: `expert` = 1.0, `advanced` = 0.8, `intermediate` = 0.5, `beginner` = 0.2.
-*   The final $S_{\text{skills}}$ is the sum of $(W_s \times T_s \times \text{Proficiency})$ across matched skills, normalized to a maximum of 100.
+*   Adjusted by skill proficiency weight (`expert` = 1.0, `advanced` = 0.8, `intermediate` = 0.5, `beginner` = 0.2) and skill duration.
 
-### B. Experience Fit Score ($S_{\text{experience}}$)
-The Job Description targets 5–9 years of experience, with a sweet spot of 6–8 years. We map the total reported `years_of_experience` ($Y$) using a trapezoidal membership function:
-*   If $6.0 \le Y \le 8.0$: $S_{\text{experience}} = 100$
-*   If $5.0 \le Y < 6.0$: $S_{\text{experience}} = 100 - (6.0 - Y) \times 40$ (smooth decay to 60 at 5 years)
-*   If $8.0 < Y \le 9.0$: $S_{\text{experience}} = 100 - (Y - 8.0) \times 20$ (smooth decay to 80 at 9 years)
-*   If $Y < 5.0$ or $Y > 9.0$: Scale down exponentially (heavy penalty for $<3$ or $>12$ years).
+#### 2. Refined Experience Fit Score ($S_{\text{experience}}$)
+To ensure we do not penalize highly experienced candidates who are still active builders, we implement a **hands-on validation rule**:
+*   If total experience $Y$ is in the sweet spot $[6.0, 8.0]$ years $\rightarrow$ **100 points**.
+*   If experience $Y$ is below 6.0 years $\rightarrow$ Decays smoothly ($S_{\text{experience}} = 100 - (6.0 - Y) \times 40$).
+*   If experience $Y$ is above 8.0 years:
+    *   **Hands-on Check**: If candidate has `github_activity_score >= 30` OR `skills_count >= 15` OR their current title is an active engineering role (i.e. does not contain `"VP"`, `"Director"`, `"Manager"`, `"Architect"`) $\rightarrow$ **100 points** (No penalty, they are active builders!).
+    *   **Otherwise (Management/Architect decay)**: Decays smoothly to penalize non-coding transition profiles ($S_{\text{experience}} = \max(0, 100 - (Y - 8.0) \times 15)$).
 
-### C. Contextual Title & Description Alignment ($S_{\text{context}}$)
-We check job titles and descriptions in `career_history` for active hands-on ranking/retrieval roles:
-*   If the **current job title** contains `"Machine Learning"`, `"ML"`, `"AI"`, `"Search"`, `"Ranking"`, or `"Retrieval"`, candidate receives a major bonus (+30 points).
-*   If recent job descriptions contain phrases like `"built search"`, `"deployed recommendation"`, `"optimized NDCG"`, `"vector indexing"`, candidate receives a bonus (+20 points).
-*   If the headline or summary explicitly matches the founding-engineer profile, candidate receives +10 points.
+### D. Behavioral & Platform Score ($S_{\text{behavioral}}$)
+Integrates candidate behaviors and platform signals:
+$$S_{\text{behavioral}} = 0.30 \times S_{\text{github}} + 0.25 \times S_{\text{responsiveness}} + 0.20 \times S_{\text{activity}} + 0.15 \times S_{\text{reliability}} + 0.10 \times S_{\text{demand}}$$
+
+1.  **GitHub Score ($S_{\text{github}}$)**: Claims `github_activity_score` directly (or 0 if `-1`).
+2.  **Responsiveness ($S_{\text{responsiveness}}$)**: `recruiter_response_rate` (0 to 100) minus a penalty for high response latency (`avg_response_time_hours`).
+3.  **Activity Recency ($S_{\text{activity}}$)**: Logs recency. If inactive for $>180$ days relative to `2026-06-17`, score is `0`.
+4.  **Platform Reliability ($S_{\text{reliability}}$)**: Average of `interview_completion_rate` and `offer_acceptance_rate`.
+5.  **Recruiter Demand ($S_{\text{demand}}$)**: Aggregated percentile score of `saved_by_recruiters_30d` and `profile_views_received_30d`.
 
 ---
 
 ## 4. Stage 3: Availability & Logistics Modifiers
 
-A perfect-on-paper candidate who cannot be hired must be down-ranked. The final score is adjusted using multiplicative modifiers:
+The composite score is multiplied by logistics modifiers to prioritize local and readily hireable candidates:
 
-$$\text{Final Score} = S_{\text{fit}} \times M_{\text{activity}} \times M_{\text{notice}} \times M_{\text{location}}$$
+$$\text{Final Score} = \text{Composite Score} \times M_{\text{notice}} \times M_{\text{location}}$$
 
-### A. Activity Multiplier ($M_{\text{activity}}$)
-Measures platform presence. If inactive, the candidate is likely passive.
-*   Let $Days$ be the number of days between `last_active_date` and `2026-06-17`.
-*   If $Days \le 30$: $M_{\text{activity}} = 1.0$
-*   If $30 < Days \le 90$: $M_{\text{activity}} = 0.9$
-*   If $90 < Days \le 180$: $M_{\text{activity}} = 0.7$
-*   If $Days > 180$: $M_{\text{activity}} = 0.4$ (heavy decay)
-
-### B. Notice Period Multiplier ($M_{\text{notice}}$)
-Redrob prefers sub-30-day notice.
-*   If `notice_period_days` $\le 30$: $M_{\text{notice}} = 1.0$
-*   If $30 < \text{notice\_period\_days} \le 60$: $M_{\text{notice}} = 0.9$
-*   If $60 < \text{notice\_period\_days} \le 90$: $M_{\text{notice}} = 0.75$
-*   If `notice_period_days` $> 90$: $M_{\text{notice}} = 0.4$ (substantial penalty)
-
-### C. Location Fit Multiplier ($M_{\text{location}}$)
-Pune/Noida hybrid is preferred. Outside India is penalized due to lack of visa sponsorship.
-*   If `country` is NOT `"India"` (or analogous matching for location):
-    *   If `willing_to_relocate` is False: $M_{\text{location}} = 0.1$
-    *   If `willing_to_relocate` is True: $M_{\text{location}} = 0.4$
-*   If `country` is `"India"`:
-    *   If `location` is Pune or Noida: $M_{\text{location}} = 1.0$
-    *   If `location` is a Tier-1 city (Bangalore, Mumbai, Delhi, Gurgaon, Hyderabad) AND `willing_to_relocate` is True: $M_{\text{location}} = 0.95$
-    *   If `location` is Tier-1 but `willing_to_relocate` is False: $M_{\text{location}} = 0.6$
-    *   Other Indian cities: $M_{\text{location}} = 0.7$ if relocating, $0.5$ if not.
+*   **Notice Period Modifier ($M_{\text{notice}}$)**:
+    *   Notice period $\le 30$ days $\rightarrow$ $1.0$
+    *   Notice period $\le 60$ days $\rightarrow$ $0.90$
+    *   Notice period $\le 90$ days $\rightarrow$ $0.75$
+    *   Notice period $> 90$ days $\rightarrow$ $0.40$ (Substantial penalty)
+*   **Location Fit Modifier ($M_{\text{location}}$)**:
+    *   Country is NOT `"India"` and `willing_to_relocate` is False $\rightarrow$ $0.10$
+    *   Country is NOT `"India"` and `willing_to_relocate` is True $\rightarrow$ $0.40$
+    *   Country is `"India"` and location is Pune or Noida $\rightarrow$ $1.0$
+    *   Country is `"India"`, location is Tier-1 (Bangalore, Mumbai, Delhi, Gurgaon, Hyderabad) and `willing_to_relocate` is True $\rightarrow$ $0.95$
+    *   Country is `"India"`, location is Tier-1 and `willing_to_relocate` is False $\rightarrow$ $0.60$
 
 ---
 
-## 5. Stage 4: Post-Processing & Tie-Breaking
+## 5. Stage 4: Deterministic Tie-Breaking & Bias Control
 
-Once scores are computed:
-1.  **Sorting**: The candidate list is sorted by `Final Score` descending.
-2.  **Tie-Breaking**: If multiple candidates share the same final score, the rank order is broken deterministically by checking their `candidate_id` in alphabetical ascending order (e.g. `CAND_0000010` ranks ahead of `CAND_0000020`).
-3.  **Top 100 Selection**: The top 100 candidates are sliced from the sorted list.
-4.  **Reasoning Generation**: For each of the top 100, we assemble a fact-grounded reasoning sentence:
-    *   *Formula*: `"{Title} with {Experience} years of experience; possesses verified skills in {Skill_1} and {Skill_2} with strong platform activity; notice period is {Notice} days."`
-    *   This ensures 100% profile alignment (no hallucinations) and natural variation because it uses candidate-specific facts.
+To satisfy challenge formatting requirements, candidate rankings must be monotonic and unique:
+1.  **Monotonicity**: Score at rank $i \ge$ score at rank $i+1$.
+2.  **Uniqueness**: Each rank integer $1$ through $100$ must appear exactly once. No duplicate ranks are allowed.
 
----
+### Tie-Breaking Resolution
+If two or more candidates have identical scores (or scores differing only within a floating-point precision of $\epsilon = 10^{-6}$), the tie is broken using a **deterministic lexicographical rule**:
+*   **Candidate ID Ascending**: The candidate with the alphabetically smaller `candidate_id` is assigned the higher rank (e.g. `CAND_0000010` ranks ahead of `CAND_0000020`).
 
-## 6. Pipeline Validation (CI/CD)
-
-The pipeline is wrapped in `run_pipeline.py` which automatically runs the following validations:
-*   Checks that the output file contains exactly 100 data rows and 1 header.
-*   Checks that ranks are unique integers 1–100.
-*   Verifies that scores are monotonically non-increasing.
-*   Validates candidate IDs against the database.
-*   Confirms the compute profile runs under 5 minutes on CPU.
+### Bias Control Principles
+*   **No Randomness**: Avoid random or stochastic tie-breaking. Same input must guarantee the exact same ranking output (reproducible and auditable).
+*   **No Domain-Feature Bias**: We explicitly avoid tie-breaking based on submission timestamps (which penalizes late-stage code improvements) or profile completeness (which rewards gaming the platform), selecting the candidate ID as the most transparent, neutral, and stable fallback.
