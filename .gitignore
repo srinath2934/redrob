@@ -1,0 +1,29 @@
+# Virtual Environment
+red_env/
+.venv/
+venv/
+ENV/
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Large Data & Artifacts
+[PUB] India_runs_data_and_ai_challenge/
+artifacts/qdrant_index/
+artifacts/features.json
+artifacts/bge_model/
+output/
+*.csv
+*.json
+*.parquet
+*.gz
+*.zip
+*.log
+
+# Editor Settings
+.vscode/
+.idea/
+.DS_Store
