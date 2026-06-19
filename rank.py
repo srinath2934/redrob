@@ -4,6 +4,7 @@ import json
 import csv
 import argparse
 import random
+import time
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import offline_utils
@@ -125,6 +126,8 @@ def generate_reasoning(candidate, rank, score, features):
 logger = offline_utils.setup_logging("rank")
 
 def main():
+    start_total = time.perf_counter()
+    
     parser = argparse.ArgumentParser(description="Redrob Candidate Ranker")
     parser.add_argument("--candidates", type=str, required=True, help="Path to raw candidates JSON or JSONL file")
     parser.add_argument("--out", type=str, required=True, help="Path to output submission CSV file")
@@ -132,6 +135,7 @@ def main():
     
     # 1. Load Job Description and BGE Model
     logger.info("Loading Job Description and local BGE model...")
+    start_model_jd = time.perf_counter()
     try:
         jd_text = load_jd_text()
     except Exception as e:
@@ -147,12 +151,16 @@ def main():
     
     # Normalize JD vector
     jd_vector = jd_vector / np.linalg.norm(jd_vector)
+    end_model_jd = time.perf_counter()
+    logger.info(f"Loaded Job Description and local BGE model in {end_model_jd - start_model_jd:.4f} seconds.")
     
     # 2. Read Candidates
     logger.info(f"Reading candidates from {args.candidates}...")
+    start_candidates = time.perf_counter()
     try:
         candidates = read_candidates_file(args.candidates)
-        logger.info(f"Successfully read {len(candidates)} candidates.")
+        end_candidates = time.perf_counter()
+        logger.info(f"Successfully read {len(candidates)} candidates in {end_candidates - start_candidates:.4f} seconds.")
     except Exception as e:
         logger.error(f"Failed to read candidates file: {e}")
         sys.exit(1)
@@ -168,12 +176,14 @@ def main():
     if has_cache:
         try:
             logger.info("Loading pre-computed cache files...")
+            start_cache = time.perf_counter()
             with open(IDS_PATH, "r", encoding="utf-8") as ih:
                 cached_ids = json.load(ih)
             with open(FEATURES_PATH, "r", encoding="utf-8") as fh:
                 features_cache = json.load(fh)
             embeddings_matrix = np.load(EMBEDDINGS_PATH)
-            logger.info("Cache files loaded successfully.")
+            end_cache = time.perf_counter()
+            logger.info(f"Cache files loaded successfully in {end_cache - start_cache:.4f} seconds.")
         except Exception as e:
             logger.warning(f"Failed to load caches: {e}. Defaulting to dynamic mode.")
             has_cache = False
@@ -185,6 +195,7 @@ def main():
     honeypot_count = 0
     it_service_count = 0
     
+    start_scoring = time.perf_counter()
     if is_cached_mode:
         logger.info("Executing in CACHED MODE (Fast Path)")
         
@@ -223,7 +234,7 @@ def main():
                 "features": feats
             })
     else:
-        logger.info("⚙️ Executing in HYBRID DYNAMIC MODE (On-the-fly for uncached) ⚙️")
+        logger.info("Executing in HYBRID DYNAMIC MODE (On-the-fly for uncached)")
         
         # Identify cached vs uncached
         uncached_indices = []
@@ -287,11 +298,16 @@ def main():
                 "features": feats
             })
             
+    end_scoring = time.perf_counter()
+    logger.info(f"Scored {len(candidates)} candidates in {end_scoring - start_scoring:.4f} seconds.")
     logger.info(f"Exclusion Summary: Blocked {honeypot_count} honeypots and excluded {it_service_count} IT-service-only candidates.")
             
     # 4. Sort and Deterministically break ties
     logger.info("Sorting candidates and resolving ties deterministically...")
+    start_sorting = time.perf_counter()
     scored_candidates.sort(key=lambda x: (-x["score"], x["candidate"]["candidate_id"]))
+    end_sorting = time.perf_counter()
+    logger.info(f"Sorted candidates and resolved ties in {end_sorting - start_sorting:.4f} seconds.")
     
     logger.info("Top 5 Ranked Candidates:")
     for r_idx in range(min(5, len(scored_candidates))):
@@ -300,6 +316,7 @@ def main():
     
     # 5. Extract Top 100 and write CSV
     logger.info(f"Writing top 100 candidates to {args.out}...")
+    start_export = time.perf_counter()
     output_dir = os.path.dirname(args.out)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
@@ -325,7 +342,12 @@ def main():
                 # In case candidates list has less than 100 rows, pad with empty/mock rows to satisfy validator
                 writer.writerow([f"CAND_{9999999-rank_idx:07d}", rank_idx + 1, "0.0000", "Placeholder candidate due to small input list."])
                 
+    end_export = time.perf_counter()
+    logger.info(f"Generated reasoning and exported CSV in {end_export - start_export:.4f} seconds.")
     logger.info(f"CSV submission file created successfully at {args.out}!")
+    
+    end_total = time.perf_counter()
+    logger.info(f"Total ranking engine runtime: {end_total - start_total:.4f} seconds.")
 
 if __name__ == "__main__":
     main()
