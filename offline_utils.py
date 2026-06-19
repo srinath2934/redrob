@@ -67,6 +67,18 @@ def calculate_duration_months(start_str, end_str, is_current):
     total_months = diff_years * 12 + diff_months
     return max(0, total_months)
 
+# Non-software engineering and non-technical disciplines that should never rank for AI roles
+NON_TECH_TRAP_TITLES = {
+    "civil", "mechanical", "chemical", "electrical", "aerospace",
+    "graphic", "designer", "illustrator", "creative director",
+    "brand", "content writer", "copywriter",
+    "finance", "accountant", "financial analyst",
+    "legal", "lawyer", "attorney", "paralegal",
+    "supply chain", "procurement", "logistics",
+    "customer support", "customer service",
+    "operations manager", "project manager",
+}
+
 def check_honeypot(candidate):
     reasons = []
     
@@ -123,6 +135,31 @@ def check_honeypot(candidate):
             break
     if has_skill_inflation:
         reasons.append("skill_duration_over_inflation")
+
+    # 5. Title-Summary Mismatch (Keyword Stuffer Trap)
+    # Catches candidates whose summary template references an unrelated role
+    profile = candidate.get("profile", {})
+    current_title = profile.get("current_title", "").lower()
+    summary = profile.get("summary", "").lower()
+    headline = profile.get("headline", "").lower()
+    
+    # Common injected mismatch patterns in honeypot summaries
+    mismatch_patterns = [
+        ("marketing manager", ["marketing", "sales", "brand"]),
+        ("customer support", ["support", "customer", "service"]),
+        ("graphic designer", ["graphic", "design", "visual", "illustrat"]),
+        ("content writer", ["content", "writing", "copywrite"]),
+        ("sales manager", ["sales", "revenue", "business development"]),
+        ("hr manager", ["hr", "human resource", "recruitment", "talent acquisition"]),
+    ]
+    
+    for inject_keyword, valid_title_terms in mismatch_patterns:
+        if inject_keyword in summary:
+            # Summary mentions an irrelevant role - check if title matches
+            title_matches = any(term in current_title for term in valid_title_terms)
+            if not title_matches:
+                reasons.append(f"summary_title_mismatch (summary mentions '{inject_keyword}' but title is '{profile.get('current_title', '')}'")
+                break
         
     return len(reasons) > 0, reasons
 
@@ -149,23 +186,75 @@ def calculate_title_score(title):
         return 50.0
     title_lower = title.lower()
     
-    # 1. Trap Titles (0 points / Disqualified)
-    trap_keywords = {"marketing", "sales", "recruiter", "hr", "operations", "consultant", "business analyst", "accountant"}
-    for kw in trap_keywords:
+    # 1. Hard Trap Titles: Non-technical roles that should never rank (0 points)
+    # Order matters: check more specific terms first
+    hard_trap_keywords = [
+        "marketing", "sales", "recruiter", "hr ", "human resource",
+        "operations manager", "business analyst", "accountant", "finance",
+        "graphic design", "graphic designer", "illustrator",
+        "content writer", "copywriter", "creative director", "brand manager",
+        "legal", "lawyer", "attorney", "paralegal",
+        "supply chain", "procurement", "logistics",
+        "customer support", "customer service",
+        "project manager",  # non-technical PM is a trap
+        "civil engineer", "mechanical engineer", "chemical engineer",
+        "electrical engineer", "aerospace engineer", "structural engineer",
+        "product manager",  # PM (not engineering) is lower tier
+    ]
+    for kw in hard_trap_keywords:
         if kw in title_lower:
             return 0.0
-            
-    # 2. Target ML/AI Engineering Title (100 points)
-    ml_keywords = {"machine learning", "ml", "ai", "search", "ranking", "retrieval", "nlp", "computer vision"}
+
+    # 2. Target ML/AI Engineering Title (100 points) - check BEFORE generic "engineer"
+    ml_keywords = [
+        "machine learning", " ml ", "ml engineer", "ml researcher",
+        " ai ", "ai engineer", "ai researcher", "applied ai",
+        "search engineer", "search scientist",
+        "ranking", "retrieval", "recommendation",
+        "nlp", "natural language", "computer vision",
+        "deep learning", "research engineer", "research scientist"
+    ]
     for kw in ml_keywords:
         if kw in title_lower:
             return 100.0
-            
-    # 3. Technical Pipeline Title (70 points)
-    tech_keywords = {"software", "backend", "data", "fullstack", "systems", "developer", "engineer"}
+
+    # Edge case: title IS exactly "AI" or starts with it
+    if title_lower.startswith("ai") or " ai" in title_lower:
+        return 100.0
+
+    # 3. Technical Software Pipeline Title (70 points)
+    # Only award "engineer" points if it's a software/tech discipline
+    tech_keywords = [
+        "software engineer", "software developer",
+        "backend engineer", "backend developer",
+        "frontend engineer", "fullstack", "full stack",
+        "data engineer", "data scientist", "data analyst",
+        "platform engineer", "infrastructure engineer",
+        "cloud engineer", "devops engineer", "sre",
+        "systems engineer", "systems developer",
+        "java developer", "python developer", ".net developer",
+        "android engineer", "ios engineer",
+        "qa engineer", "test engineer", "sdet",
+        "security engineer",
+    ]
     for kw in tech_keywords:
         if kw in title_lower:
             return 70.0
+
+    # If title contains only bare "engineer" (no qualifier matched above), check context
+    # Generic "engineer" without a software qualifier is unknown - treat as neutral
+    if "engineer" in title_lower or "developer" in title_lower:
+        # Last safety check: if any non-tech discipline is in the title, return 0
+        non_tech_qualifiers = [
+            "civil", "mechanical", "chemical", "electrical", "aerospace",
+            "structural", "process", "petroleum", "biomedical", "industrial",
+            "manufacturing", "quality", "field", "hardware",
+        ]
+        for nq in non_tech_qualifiers:
+            if nq in title_lower:
+                return 0.0
+        # Bare "engineer" with no context - give moderate score
+        return 60.0
             
     return 50.0
 

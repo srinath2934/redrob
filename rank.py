@@ -204,12 +204,16 @@ def main():
             idx = cached_ids[cid]
             feats = features_cache[cid]
             
-            # Check exclusions
+            # Check exclusions: honeypot, IT-service-only, or disqualified title
             if feats["is_honeypot"] or feats["is_it_service_only"]:
                 if feats["is_honeypot"]:
                     honeypot_count += 1
                 if feats["is_it_service_only"]:
                     it_service_count += 1
+                final_score = 0.0
+            elif feats.get("title_score", 50.0) == 0.0:
+                # Hard gate: disqualified title (civil engineer, accountant, graphic designer, etc.)
+                honeypot_count += 1
                 final_score = 0.0
             else:
                 # Dot product of normalized vectors = Cosine Similarity
@@ -264,12 +268,16 @@ def main():
             else:
                 feats = offline_utils.extract_all_features(cand)
                 
-            # Check exclusions
+            # Check exclusions: honeypot, IT-service-only, or disqualified title
             if feats["is_honeypot"] or feats["is_it_service_only"]:
                 if feats["is_honeypot"]:
                     honeypot_count += 1
                 if feats["is_it_service_only"]:
                     it_service_count += 1
+                final_score = 0.0
+            elif feats.get("title_score", 50.0) == 0.0:
+                # Hard gate: disqualified title (civil engineer, accountant, graphic designer, etc.)
+                honeypot_count += 1
                 final_score = 0.0
             else:
                 # Fetch or compute embedding

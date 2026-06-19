@@ -211,8 +211,11 @@ def run_ranking_engine(uploaded_candidates_list, jd_text):
         else:
             feats = offline_utils.extract_all_features(cand)
             
-        # Apply safety checks
+        # Apply safety checks: honeypot, IT-service-only, or disqualified title
         if feats["is_honeypot"] or feats["is_it_service_only"]:
+            final_score = 0.0
+        elif feats.get("title_score", 50.0) == 0.0:
+            # Hard gate: disqualified title (civil engineer, accountant, graphic designer, etc.)
             final_score = 0.0
         else:
             # Fetch embedding
