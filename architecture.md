@@ -1,35 +1,36 @@
 # System Architecture & Pipeline Design: Redrob Candidate Ranker
 
-This document details the system design, processing stages, and mathematical formulations for the candidate ranking pipeline. The pipeline is designed to process 100,000 candidate profiles against a Senior AI Engineer job description, running on a standard CPU within a 5-minute window.
+This document details the system design, processing stages, and mathematical formulations for the candidate ranking pipeline. The pipeline is designed to process 100,000 candidate profiles against a Senior AI Engineer job description, running on a standard CPU within a 5-minute window using pre-computed embeddings and feature scores. Both phases (pre-computation and ranking) execute 100% offline.
 
 ---
 
 ## 1. High-Level Data Flow
 
-The ranking pipeline operates as a **hybrid search and scoring cascade**. To satisfy the 5-minute compute budget on CPU without internet access, heavy operations are completed offline. During the online phase, the system performs fast vector retrieval, applies safety filters, scores candidates using a multi-factor hybrid formula, and resolves ties deterministically.
+The ranking pipeline operates as a **lightweight pre-computed similarity and features matcher**. To satisfy the 5-minute compute budget on CPU without internet access or running external database servers, all heavy operations are completed in the pre-computation phase. During the ranking step, the system performs fast vector retrieval using NumPy dot products, applies safety filters, scores candidates using a multi-factor hybrid formula, and resolves ties deterministically.
 
 ```
        [Raw Candidates (100K JSONL)]
                      │
-                     ▼ (Offline Phase)
+                     ▼ (Pre-computation Phase - Run Once)
            ┌─────────────────────┐
            │ 1. Feature Prep     │ ──> Computes scores, flags fakes & service-only
            └──────────┬──────────┘
                      │
                      ▼
            ┌─────────────────────┐
-           │ 2. BGE Embedding    │ ──> Generates BGE vectors for all 100K
+           │ 2. BGE Embedding    │ ──> Generates BGE vectors for all 100K candidates
            └──────────┬──────────┘
                      │
                      ▼
            ┌─────────────────────┐
-           │ 3. Qdrant Indexing  │ ──> Saves index with payloads to disk
+           │ 3. Save Cache files │ ──> Saves embeddings.npy & features.json to disk
            └─────────────────────┘
 
                      │
-                     ▼ (Online Ranking Phase - 5 min Clock)
+                     ▼ (Ranking Step - 5 min Clock)
            ┌─────────────────────┐
-           │ 4. JD Vector Search │ ──> Encodes JD; retrieves Top 500 from Qdrant
+           │ 4. Similarity calc  │ ──> Encodes JD; calculates Cosine Similarity
+           │                     │     via NumPy Dot Product (np.dot)
            └──────────┬──────────┘
                      │
                      ▼
@@ -50,8 +51,65 @@ The ranking pipeline operates as a **hybrid search and scoring cascade**. To sat
                      │
                      ▼
            ┌─────────────────────┐
-           │ 8. Export Top 100   │ ──> Writes ranked output CSV
+           │ 8. Export Top 100   │ ──> Writes ranked output CSV (with offline reasoning)
            └─────────────────────┘
+```
+
+### Detailed Mermaid Diagram
+
+```mermaid
+flowchart TD
+    %% Styling Definitions
+    classDef prep fill:#e0f7fa,stroke:#00acc1,stroke-width:2px,color:#004d40;
+    classDef rank fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px,color:#4a148c;
+    classDef filter fill:#ffebee,stroke:#e53935,stroke-width:2px,color:#b71c1c;
+    classDef decision fill:#fffde7,stroke:#fbc02d,stroke-width:2px,color:#f57f17;
+    classDef output fill:#e8f5e9,stroke:#43a047,stroke-width:2px,color:#1b5e20;
+
+    %% Pre-computation Phase
+    subgraph Prep ["Pre-computation Phase (Run Once)"]
+        A["Raw Candidates Pool: 100K JSONL"]:::prep --> B["Preprocess & Clean"]:::prep
+        B --> C["Honeypot & IT-Service Check"]:::prep
+        C --> D["Compute Feature Scores"]:::prep
+        D --> E["BGE Small Text Embedder"]:::prep
+        E --> F1["embeddings.npy (153MB Matrix)"]:::prep
+        D --> F2["features.json (Feature Scores)"]:::prep
+    end
+
+    %% Ranking Step
+    subgraph Rank ["Ranking Step (5-Minute Clock)"]
+        G["Input Candidates File"]:::rank --> H{"Does candidate list match 100K pool?"}:::decision
+        
+        %% Cached Mode
+        H -- "Yes" --> I1["Load embeddings.npy & features.json"]:::rank
+        I1 --> J1["Load BGE Model in CPU RAM"]:::rank
+        J1 --> K1["BGE encodes Job Description text"]:::rank
+        K1 --> L1["Calculate Cosine Similarity via NumPy Dot Product (0.05s)"]:::rank
+        L1 --> M1["Relevance Score Matrix"]:::rank
+        
+        %% Dynamic Mode
+        H -- "No" --> I2["Load BGE Model in CPU RAM"]:::rank
+        I2 --> J2["Generate BGE embeddings on-the-fly"]:::rank
+        J2 --> K2["Compute candidate features on-the-fly"]:::rank
+        K2 --> L2["Calculate Cosine Similarity via NumPy Dot Product"]:::rank
+        L2 --> M1
+        
+        %% Exclusions & Scoring
+        M1 --> N["Exclude Honeypots & IT-Service-Only"]:::filter
+        N --> O["Calculate Hybrid Score (0.35 Title + 0.25 Semantic + 0.20 Skill + 0.20 Behavioral)"]:::rank
+        O --> P{"Are there score ties within 1e-6?"}:::decision
+        
+        %% Tie-Breaking & Output
+        P -- "Yes" --> Q["Deterministic tie-breaker (candidate_id ascending)"]:::filter
+        P -- "No" --> R["Sort by Score descending"]:::rank
+        Q --> S["Assign unique monotonic ranks 1-100"]:::rank
+        R --> S
+        S --> T["Export ranked_output.csv with offline reasoning"]:::output
+    end
+
+    %% Connections
+    F1 -.-> I1
+    F2 -.-> I1
 ```
 
 ---
@@ -92,7 +150,7 @@ Weights candidate titles directly:
 
 ### B. Semantic Match Score ($S_{\text{semantic}}$)
 *   Cosine similarity between BGE Small encoded vector of the Job Description and BGE Small encoded vector of the candidate profile (headline + summary + career history descriptions).
-*   Normalized to a $[0, 100]$ scale.
+*   Calculated via NumPy dot product between pre-computed candidate embeddings and the JD vector, normalized to a $[0, 100]$ scale.
 
 ### C. Skill Depth & Experience Fit Score ($S_{\text{skill\_depth}}$)
 Calculated as:
@@ -145,7 +203,35 @@ $$\text{Final Score} = \text{Composite Score} \times M_{\text{notice}} \times M_
 
 ---
 
-## 5. Stage 4: Deterministic Tie-Breaking & Bias Control
+## 5. Stage 4: Factual Offline Reasoning Generation
+
+To prevent network dependency and run 100% offline within the 5-minute limit, the pipeline uses a dynamic, rule-based reasoning generator to construct the `reasoning` column in the final output CSV. This generator builds 1-2 sentence descriptions using real candidate facts to satisfy all validation checks:
+
+*   **Strict Single-Line Constraint**: To prevent CSV cell corruption and comply with standard CSV parsers, the generated reasoning string is stripped of all raw newlines (`\n`) and carriage returns (`\r`). The generator replaces them with spaces to ensure each reasoning cell is printed on exactly one continuous line of text.
+
+### A. Core Architecture & Slot-Filling Heuristic
+The generator extracts exact facts from the candidate's JSON profile:
+*   **Experience**: `profile.years_of_experience` (e.g. "6.5 years")
+*   **Current Title**: `profile.current_title` (e.g. "Senior ML Engineer")
+*   **Matched Skills**: Up to 3 of the candidate's skills matching core requirements (e.g. "PyTorch, Qdrant, NLP")
+*   **Notice Period**: `redrob_signals.notice_period_days` (e.g. "30 days")
+*   **Location**: `profile.location` (e.g. "Pune")
+
+### B. Variation Heuristics (Avoiding Templates)
+To avoid templated output penalties, the generator maintains a pool of 10+ distinct sentence structures. The generator dynamically selects and combines structures based on candidate characteristics (e.g. whether they have high GitHub activity or a long notice period), ensuring high linguistic variation.
+
+### C. Rank Consistency Check
+The tone and content of the reasoning are aligned with the assigned rank band:
+1.  **Ranks 1–10 (Glowing / Top Picks)**: Focuses on perfect experience sweet-spots, target ML titles, and immediate availability (notice period $\le 30$ days).
+    *   *Example*: `"Top-tier ML Engineer with 7 years experience building RAG systems; Pune-based with immediate availability."`
+2.  **Ranks 11–50 (Strong Fits)**: Emphasizes solid technical match and active building credentials, noting minor concerns (e.g., notice period <= 60 days).
+    *   *Example*: `"Strong NLP and retrieval engineer with 6 years experience; excellent GitHub activity despite a 60-day notice period."`
+3.  **Ranks 51–100 (Moderate Fits / Gaps Acknowledged)**: Acknowledges honest concerns or gaps (location relocation, notice period $> 90$ days, or adjacent skills acting as filler candidates) to remain factual.
+    *   *Example*: `"Solid ML background, but significant concern on notice period (120 days) and relocation needs from Bangalore."`
+
+---
+
+## 6. Stage 5: Deterministic Tie-Breaking & Bias Control
 
 To satisfy challenge formatting requirements, candidate rankings must be monotonic and unique:
 1.  **Monotonicity**: Score at rank $i \ge$ score at rank $i+1$.
@@ -158,3 +244,4 @@ If two or more candidates have identical scores (or scores differing only within
 ### Bias Control Principles
 *   **No Randomness**: Avoid random or stochastic tie-breaking. Same input must guarantee the exact same ranking output (reproducible and auditable).
 *   **No Domain-Feature Bias**: We explicitly avoid tie-breaking based on submission timestamps (which penalizes late-stage code improvements) or profile completeness (which rewards gaming the platform), selecting the candidate ID as the most transparent, neutral, and stable fallback.
+
