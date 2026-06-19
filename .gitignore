@@ -22,6 +22,7 @@ output/
 *.gz
 *.zip
 *.log
+rules.md
 
 # Editor Settings
 .vscode/
