@@ -109,7 +109,7 @@ def verify_metadata():
 
 def main():
     logger.info("==============================================")
-    logger.info("🚀 REDROB RANKING PIPELINE ORCHESTRATOR 🚀")
+    logger.info("[START] REDROB RANKING PIPELINE ORCHESTRATOR")
     logger.info("==============================================")
     
     if not verify_challenge_bundle():
@@ -130,7 +130,7 @@ def main():
     verify_metadata()
     
     logger.info("==============================================")
-    logger.info("🎉 PIPELINE RUN COMPLETED SUCCESSFULLY! 🎉")
+    logger.info("[SUCCESS] PIPELINE RUN COMPLETED SUCCESSFULLY!")
     logger.info("Your submission CSV and metadata are ready for upload.")
     logger.info("==============================================")
 

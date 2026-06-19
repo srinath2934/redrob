@@ -1,0 +1,70 @@
+# Redrob Hackathon — Submission Metadata
+#
+# Filled in for Team Srinath
+
+# ============================================================================
+# Team identity
+# ============================================================================
+team_name: "Srinath"
+
+primary_contact:
+  name: "Srinath"
+  email: "sirnath2934@gmail.com"
+  phone: "+91-XXXXXXXXXX"
+
+team_members:
+  - name: "Srinath"
+    email: "sirnath2934@gmail.com"
+    role: "ML Engineer"
+
+# ============================================================================
+# Code and reproducibility
+# ============================================================================
+github_repo: "https://github.com/srinath2934/redrob"
+
+sandbox_link: "https://huggingface.co/spaces/srinath2934/redrob-ranker"
+
+reproduce_command: "python rank.py --candidates ./candidates.jsonl --out ./submission.csv"
+
+# ============================================================================
+# Compute environment
+# ============================================================================
+compute:
+  platform: "Local Windows Machine"
+  cpu_cores: 8
+  ram_gb: 16
+  python_version: "3.12"
+  os: "Windows"
+  uses_gpu_for_inference: false
+  has_network_during_ranking: false
+  pre_computation_required: true
+  pre_computation_time_minutes: 43
+
+# ============================================================================
+# AI tools declaration
+# ============================================================================
+ai_tools_used:
+  - "Gemini"
+  - "Claude"
+
+ai_usage_summary: |
+  Used Gemini and Claude for development, code styling, architecture documentation, and log debugging. No candidate data was sent to any external LLMs.
+
+# ============================================================================
+# Approach summary
+# ============================================================================
+methodology_summary: |
+  An offline candidate ranking system utilizing pre-computed BGE embeddings and safety heuristics.
+  Excludes honeypots and service-company candidate profiles. Calculates a hybrid score based
+  on current job titles, semantic matching, structured experiences, notice periods, and location
+  relocations with deterministic tie-breaking.
+
+# ============================================================================
+# Declarations
+# ============================================================================
+declarations:
+  read_submission_spec: true
+  code_is_original_work: true
+  no_collusion: true
+  honeypot_check_done: true
+  reproduction_tested: true

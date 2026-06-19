@@ -111,7 +111,7 @@ def main():
     logger.info(f"Saving embeddings matrix of shape {all_embeddings.shape} to {embeddings_path}...")
     np.save(embeddings_path, all_embeddings)
     
-    logger.info("🎉 Pre-computation caching complete! All artifacts generated. 🎉")
+    logger.info("Pre-computation caching complete! All artifacts generated.")
 
 if __name__ == "__main__":
     main()

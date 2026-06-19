@@ -18,6 +18,11 @@ def setup_logging(name, log_filename="pipeline.log"):
         fh.setLevel(logging.INFO)
         
         # Console Handler (writes to stdout)
+        try:
+            if hasattr(sys.stdout, 'reconfigure'):
+                sys.stdout.reconfigure(errors='backslashreplace')
+        except Exception:
+            pass
         ch = logging.StreamHandler(sys.stdout)
         ch.setLevel(logging.INFO)
         

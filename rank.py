@@ -186,7 +186,7 @@ def main():
     it_service_count = 0
     
     if is_cached_mode:
-        logger.info("🚀 Executing in CACHED MODE (Fast Path) 🚀")
+        logger.info("Executing in CACHED MODE (Fast Path)")
         
         for cand in candidates:
             cid = cand.get("candidate_id")
@@ -325,7 +325,7 @@ def main():
                 # In case candidates list has less than 100 rows, pad with empty/mock rows to satisfy validator
                 writer.writerow([f"CAND_{9999999-rank_idx:07d}", rank_idx + 1, "0.0000", "Placeholder candidate due to small input list."])
                 
-    logger.info(f"🎉 CSV submission file created successfully at {args.out}! 🎉")
+    logger.info(f"CSV submission file created successfully at {args.out}!")
 
 if __name__ == "__main__":
     main()
