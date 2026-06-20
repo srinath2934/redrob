@@ -325,35 +325,48 @@ def calculate_behavioral_score(signals):
     github = signals.get("github_activity_score", 0)
     s_github = float(github) if github != -1 else 0.0
     
-    # 2. Responsiveness Score
+    # 2. Responsiveness Score (uses recruiter_response_rate and avg_response_time_hours)
     resp_rate = signals.get("recruiter_response_rate", 0.0)
     resp_time = signals.get("avg_response_time_hours", 0.0)
-    s_responsiveness = max(0.0, (resp_rate * 100.0) - min(30.0, resp_time * 0.5))
+    s_resp_rate = resp_rate * 100.0
+    s_resp_time = max(0.0, 100.0 - (resp_time * 2.0))
+    s_responsiveness = (s_resp_rate * 0.6) + (s_resp_time * 0.4)
     
-    # 3. Activity Recency Score
+    # 3. Activity Recency Score (uses last_active_date)
     last_active_str = signals.get("last_active_date", "")
     last_active_dt = parse_date(last_active_str)
     if last_active_dt:
         days_inactive = (REF_DATE - last_active_dt).days
-        s_activity = 100.0 if days_inactive <= 180 else 0.0
+        if days_inactive <= 30:
+            s_activity = 100.0
+        elif days_inactive <= 90:
+            s_activity = 70.0
+        elif days_inactive <= 180:
+            s_activity = 40.0
+        else:
+            s_activity = 0.0
     else:
         s_activity = 0.0
         
-    # 4. Platform Reliability Score
+    # 4. Platform Reliability Score (uses interview_completion_rate and offer_acceptance_rate)
     completion_rate = signals.get("interview_completion_rate", 0.0) * 100.0
     acceptance = signals.get("offer_acceptance_rate", 0.0)
-    acceptance_rate = (acceptance * 100.0) if acceptance != -1 else 0.0
+    acceptance_rate = (acceptance * 100.0) if acceptance != -1 else 70.0
     s_reliability = (completion_rate + acceptance_rate) / 2.0
     
-    # 5. Recruiter Demand Score
+    # 5. Recruiter Demand & Active Intent Score (uses views, saves, search appearance, applications)
     views = signals.get("profile_views_received_30d", 0)
     saves = signals.get("saved_by_recruiters_30d", 0)
-    s_views = min(100.0, views * 2.0)
+    searches = signals.get("search_appearance_30d", 0)
+    apps = signals.get("applications_submitted_30d", 0)
+    s_views = min(100.0, views * 4.0)
     s_saves = min(100.0, saves * 10.0)
-    s_demand = (s_views + s_saves) / 2.0
+    s_searches = min(100.0, searches * 1.0)
+    s_apps = min(100.0, apps * 10.0)
+    s_demand = (s_views + s_saves + s_searches + s_apps) / 4.0
     
-    # Weighted Sum
-    total = (0.30 * s_github) + (0.25 * s_responsiveness) + (0.20 * s_activity) + (0.15 * s_reliability) + (0.10 * s_demand)
+    # Weighted Sum of behavioral groups
+    total = (0.25 * s_github) + (0.25 * s_responsiveness) + (0.20 * s_activity) + (0.15 * s_reliability) + (0.15 * s_demand)
     return total
 
 def calculate_logistics_modifiers(signals, profile):
@@ -385,7 +398,67 @@ def calculate_logistics_modifiers(signals, profile):
         else:
             m_location = 0.50 if willing_relocate else 0.30
             
-    return m_notice, m_location
+    # 3. Availability Modifier
+    m_availability = 1.0 if signals.get("open_to_work_flag", True) else 0.90
+    
+    # 4. Preferred Work Mode Modifier (JD wants Hybrid Noida/Pune, remote-only gets slight penalty)
+    work_mode = signals.get("preferred_work_mode", "").lower()
+    m_work_mode = 0.85 if work_mode == "remote" else 1.0
+    
+    # 5. Salary Expectations Modifier (Soft friction if expectations are extremely high)
+    salary_range = signals.get("expected_salary_range_inr_lpa", {})
+    m_salary = 1.0
+    if isinstance(salary_range, dict):
+        salary_max = salary_range.get("max", 0)
+        if salary_max > 80:
+            m_salary = 0.90
+        elif salary_max > 60:
+            m_salary = 0.95
+            
+    return m_notice, m_location, m_availability, m_work_mode, m_salary
+
+def calculate_trust_modifier(signals):
+    profile_completeness = signals.get("profile_completeness_score", 0)
+    signup_date_str = signals.get("signup_date", "")
+    connection_count = signals.get("connection_count", 0)
+    endorsements = signals.get("endorsements_received", 0)
+    verified_email = signals.get("verified_email", False)
+    verified_phone = signals.get("verified_phone", False)
+    linkedin_connected = signals.get("linkedin_connected", False)
+    
+    s_completeness = (profile_completeness / 100.0) * 2.0
+    
+    s_tenure = 0.0
+    signup_dt = parse_date(signup_date_str)
+    if signup_dt:
+        days_tenure = (REF_DATE - signup_dt).days
+        s_tenure = min(2.0, (days_tenure / 365.0) * 1.0)
+        
+    s_connections = min(2.0, (connection_count / 100.0) * 0.4)
+    s_endorsements = min(2.0, (endorsements / 20.0) * 1.0)
+    
+    s_email = 1.0 if verified_email else 0.0
+    s_phone = 1.0 if verified_phone else 0.0
+    s_linkedin = 1.0 if linkedin_connected else 0.0
+    
+    s_trust_total = s_completeness + s_tenure + s_connections + s_endorsements + s_email + s_phone + s_linkedin
+    m_trust = 1.0 + (s_trust_total / 11.0) * 0.05
+    return m_trust
+
+def calculate_assessment_score(signals):
+    scores = signals.get("skill_assessment_scores", {})
+    if not isinstance(scores, dict) or not scores:
+        return None
+        
+    relevant_scores = []
+    for k, v in scores.items():
+        k_lower = k.lower()
+        if any(term in k_lower for term in ["python", "machine learning", "ml", "nlp", "natural language", "deep learning", "vector", "retrieval", "ranking", "sql"]):
+            relevant_scores.append(v)
+            
+    if relevant_scores:
+        return sum(relevant_scores) / len(relevant_scores)
+    return None
 
 def extract_all_features(candidate):
     profile = candidate.get("profile", {})
@@ -406,9 +479,16 @@ def extract_all_features(candidate):
         profile_with_github["github_activity_score"] = 0.0
         
     exp_score = calculate_experience_score(profile_with_github, len(skills))
+    
+    # 360-degree skills score (blends resume and Redrob assessment scores)
     skills_score = calculate_skills_score(skills)
+    assessment_score = calculate_assessment_score(signals)
+    if assessment_score is not None:
+        skills_score = 0.6 * skills_score + 0.4 * assessment_score
+        
     behavioral_score = calculate_behavioral_score(signals)
-    m_notice, m_location = calculate_logistics_modifiers(signals, profile)
+    m_notice, m_location, m_availability, m_work_mode, m_salary = calculate_logistics_modifiers(signals, profile)
+    m_trust = calculate_trust_modifier(signals)
     
     return {
         "candidate_id": candidate.get("candidate_id"),
@@ -421,6 +501,10 @@ def extract_all_features(candidate):
         "behavioral_score": behavioral_score,
         "notice_modifier": m_notice,
         "location_modifier": m_location,
+        "availability_modifier": m_availability,
+        "work_mode_modifier": m_work_mode,
+        "salary_modifier": m_salary,
+        "trust_modifier": m_trust,
         "raw_profile": {
             "years_of_experience": profile.get("years_of_experience", 0),
             "current_title": profile.get("current_title", ""),

@@ -211,32 +211,31 @@ def run_ranking_engine(uploaded_candidates_list, jd_text):
         else:
             feats = offline_utils.extract_all_features(cand)
             
-        # Apply safety checks: honeypot, IT-service-only, or disqualified title
-        if feats["is_honeypot"] or feats["is_it_service_only"]:
-            final_score = 0.0
-        elif feats.get("title_score", 50.0) == 0.0:
-            # Hard gate: disqualified title (civil engineer, accountant, graphic designer, etc.)
-            final_score = 0.0
+        # Fetch embedding
+        if use_cache and cid in cached_ids:
+            idx = cached_ids[cid]
+            cand_vector = embeddings_matrix[idx]
         else:
-            # Fetch embedding
-            if use_cache and cid in cached_ids:
-                idx = cached_ids[cid]
-                cand_vector = embeddings_matrix[idx]
-            else:
-                cand_vector = uncached_embeddings[i]
-                
-            cand_vector = cand_vector / np.linalg.norm(cand_vector)
-            semantic_score = float(np.dot(cand_vector, jd_vector)) * 100.0
+            cand_vector = uncached_embeddings[i]
             
-            title_score = feats["title_score"]
-            exp_score = feats["experience_score"]
-            skills_score = feats["skills_score"]
-            behavioral_score = feats["behavioral_score"]
-            m_notice = feats["notice_modifier"]
-            m_location = feats["location_modifier"]
-            
-            composite = (0.35 * title_score) + (0.25 * semantic_score) + (0.20 * (0.5 * skills_score + 0.5 * exp_score)) + (0.20 * behavioral_score)
-            final_score = composite * m_notice * m_location
+        cand_vector = cand_vector / np.linalg.norm(cand_vector)
+        semantic_score = float(np.dot(cand_vector, jd_vector)) * 100.0
+        
+        title_score = feats.get("title_score", 50.0)
+        exp_score = feats.get("experience_score", 0.0)
+        skills_score = feats.get("skills_score", 0.0)
+        behavioral_score = feats.get("behavioral_score", 0.0)
+        m_notice = feats.get("notice_modifier", 1.0)
+        m_location = feats.get("location_modifier", 1.0)
+        m_availability = feats.get("availability_modifier", 1.0)
+        m_work_mode = feats.get("work_mode_modifier", 1.0)
+        m_salary = feats.get("salary_modifier", 1.0)
+        m_trust = feats.get("trust_modifier", 1.0)
+        
+        composite = (0.35 * title_score) + (0.25 * semantic_score) + (0.20 * (0.5 * skills_score + 0.5 * exp_score)) + (0.20 * behavioral_score)
+        
+        m_honeypot = 0.3 if feats["is_honeypot"] else 1.0
+        final_score = composite * m_notice * m_location * m_availability * m_work_mode * m_salary * m_trust * m_honeypot
             
         scored_candidates.append({
             "candidate": cand,

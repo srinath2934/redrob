@@ -15,15 +15,23 @@ def get_candidate_summary_text(candidate):
     headline = profile.get("headline", "")
     summary = profile.get("summary", "")
     
-    # Career history titles only (excluding descriptions to maximize speed and density)
+    # Career history titles and full descriptions
     jobs_summary = []
     for job in candidate.get("career_history", []):
         j_title = job.get("title", "")
+        j_desc = job.get("description", "")
         if j_title:
-            jobs_summary.append(j_title)
+            if j_desc:
+                jobs_summary.append(f"{j_title}: {j_desc}")
+            else:
+                jobs_summary.append(j_title)
+            
+    # Complete Skills
+    skills = [s.get("name", "") for s in candidate.get("skills", [])]
     
-    jobs_str = ", ".join(jobs_summary)
-    return f"Title: {title}. Headline: {headline}. Summary: {summary}. Past Roles: {jobs_str}"
+    jobs_str = " | ".join(jobs_summary)
+    skills_str = ", ".join(skills)
+    return f"Title: {title}. Headline: {headline}. Summary: {summary}. Skills: {skills_str}. Experience: {jobs_str}"
 
 
 

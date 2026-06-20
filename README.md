@@ -1,3 +1,14 @@
+---
+title: Redrob Talent Sandbox
+emoji: 🤖
+colorFrom: blue
+colorTo: purple
+sdk: streamlit
+sdk_version: 1.35.0
+app_file: app.py
+pinned: false
+license: mit
+---
 # 🚀 Redrob Intelligent Candidate Discovery & Ranking Ranker
 
 This repository contains the end-to-end data science pipeline and ranking system designed for the **Redrob Candidate Discovery & Ranking Challenge**. The system is built to identify and rank the top 100 candidates from a 100,000-candidate pool against a Senior AI Engineer job description, running on CPU in under 5 seconds.
