@@ -163,22 +163,9 @@ for inject_keyword, valid_title_terms in mismatch_patterns:
 
 ### ✅ Verification After Fixes
 
-**Before Fixes (team_redrob.csv top 5):**
-```
-Rank 1: CAND_0000007 - Content Writing, MongoDB, Sales (0.5705) ← WRONG
-Rank 2: CAND_0000033 - Graphic Designer (0.5497) ← WRONG  
-Rank 3: CAND_0000029 - Node.js, Scrum, Tailwind (0.3156) ← wrong tech stack
-Rank 4: CAND_0000005 - Accountant (0.2963) ← WRONG
-```
-
-**After Fixes (target top 5 from full 100K run):**
-```
-Rank 1: CAND_0018499 - Senior Machine Learning Engineer (0.8963) ✅
-Rank 2: CAND_0068811 - Applied ML Engineer (0.8512) ✅
-Rank 3: CAND_0094759 - Lead AI Engineer (0.8463) ✅
-Rank 4: CAND_0088335 - AI Research Engineer (0.8161) ✅
-Rank 5: CAND_0018888 - AI Research Engineer (0.8041) ✅
-```
+- **Features Cache Rebuilt**: Successfully regenerated feature extraction for all 100,000 candidates with updated title scoring rules and summary-title mismatch checks.
+- **Tie-Breaker Bug Fix**: Fixed a critical tie-breaker sorting error in `rank.py` and `app.py`. Previously, sorting on unrounded scores resulted in out-of-order `candidate_id` listings for matching rounded scores in the output CSV. Changed sorting keys to use the 4-decimal rounded score first.
+- **Final Validation Status**: Ran `run_pipeline.py` successfully. Format validator reports: `Submission is valid.`.
 
 ---
 
@@ -187,9 +174,9 @@ Rank 5: CAND_0018888 - AI Research Engineer (0.8041) ✅
 | Metric | Value |
 |---|---|
 | Total Candidates | 100,000 |
-| Honeypots Blocked | 9,354 (9.35%) |
+| Honeypots Blocked | 73,496 (73.50%) |
 | IT-Service-Only Excluded | 8,991 (8.99%) |
-| Ranking Runtime | ~7.5 sec (cached mode) |
+| Ranking Runtime | ~7.2 sec (cached mode) |
 | Total Pipeline Time | ~15.5 sec |
 | Wall-Clock Limit | 300 sec |
 | Validator Status | ✅ PASS |
@@ -215,11 +202,12 @@ Rank 5: CAND_0018888 - AI Research Engineer (0.8041) ✅
 
 ## 🔮 What's Next
 
-- [ ] Re-run `build_cache.py` to re-index features with fixed `calculate_title_score()` and new `check_honeypot()` logic
-- [ ] Verify sample_candidates.json top 10 shows ONLY ML/AI/Software engineers
+- [x] Re-run `build_cache.py` to re-index features with fixed `calculate_title_score()` and new `check_honeypot()` logic
+- [x] Verify sample_candidates.json top 10 shows ONLY ML/AI/Software engineers
+- [x] Fix tie-breaker sorting logic mismatch on rounded vs unrounded scores
+- [x] Final run of `validate_submission.py` on final `team_redrob.csv`
 - [ ] Push all fixes to GitHub with descriptive commit message
 - [ ] Deploy updated app to HuggingFace Spaces
-- [ ] Final run of `validate_submission.py` on final `team_redrob.csv`
 
 ---
 

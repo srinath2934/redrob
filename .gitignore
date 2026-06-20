@@ -15,6 +15,7 @@ __pycache__/
 artifacts/qdrant_index/
 artifacts/features.json
 artifacts/bge_model/
+artifacts/embeddings.npy
 output/
 *.csv
 *.json

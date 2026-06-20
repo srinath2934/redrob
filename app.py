@@ -245,7 +245,7 @@ def run_ranking_engine(uploaded_candidates_list, jd_text):
         })
         
     # Sort and deterministic tie break
-    scored_candidates.sort(key=lambda x: (-x["score"], x["candidate"]["candidate_id"]))
+    scored_candidates.sort(key=lambda x: (-round(x["score"] / 100.0, 4), x["candidate"]["candidate_id"]))
     return scored_candidates
 
 # --- App Header ---

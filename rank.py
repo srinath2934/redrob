@@ -349,7 +349,7 @@ def main():
     # 4. Sort and Deterministically break ties
     logger.info("Sorting candidates and resolving ties deterministically...")
     start_sorting = time.perf_counter()
-    scored_candidates.sort(key=lambda x: (-x["score"], x["candidate"]["candidate_id"]))
+    scored_candidates.sort(key=lambda x: (-round(x["score"] / 100.0, 4), x["candidate"]["candidate_id"]))
     end_sorting = time.perf_counter()
     logger.info(f"Sorted candidates and resolved ties in {end_sorting - start_sorting:.4f} seconds.")
     
