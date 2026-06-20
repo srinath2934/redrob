@@ -292,7 +292,7 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Error parsing candidates file: {e}")
 elif load_sample:
-    sample_path = r"d:\redrob\[PUB] India_runs_data_and_ai_challenge\India_runs_data_and_ai_challenge\sample_candidates.json"
+    sample_path = "sample_candidates.json"
     if os.path.exists(sample_path):
         with open(sample_path, "r", encoding="utf-8") as sf:
             candidates_data = json.load(sf)
