@@ -55,9 +55,9 @@ ai_usage_summary: |
 # ============================================================================
 methodology_summary: |
   An offline candidate ranking system utilizing pre-computed BGE embeddings and safety heuristics.
-  Excludes honeypots and service-company candidate profiles. Calculates a hybrid score based
-  on current job titles, semantic matching, structured experiences, notice periods, and location
-  relocations with deterministic tie-breaking.
+  Penalizes honeypot profiles and IT-service company candidate profiles dynamically via soft-penalty
+  multipliers. Calculates a hybrid score based on current job titles, semantic matching, structured
+  experiences, notice periods, and location relocations with deterministic tie-breaking.
 
 # ============================================================================
 # Declarations

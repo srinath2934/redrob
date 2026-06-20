@@ -44,12 +44,12 @@ def main():
     logger.info("Initializing BGE model (BAAI/bge-small-en-v1.5)...")
     if not os.path.exists(BGE_MODEL_DIR):
         logger.info("Downloading BGE small model and saving to local cache...")
-        model = SentenceTransformer("BAAI/bge-small-en-v1.5")
+        model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")
         model.save(BGE_MODEL_DIR)
         logger.info(f"Model saved locally at {BGE_MODEL_DIR}")
     else:
         logger.info(f"Local BGE model found at {BGE_MODEL_DIR}. Loading...")
-        model = SentenceTransformer(BGE_MODEL_DIR)
+        model = SentenceTransformer(BGE_MODEL_DIR, device="cpu")
         
     logger.info("BGE model loaded successfully.")
     

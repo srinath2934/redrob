@@ -190,7 +190,7 @@ def main():
         logger.error(f"Local BGE model not found at {BGE_MODEL_DIR}. Please run build_cache.py first.")
         sys.exit(1)
         
-    model = SentenceTransformer(BGE_MODEL_DIR)
+    model = SentenceTransformer(BGE_MODEL_DIR, device="cpu")
     jd_vector = model.encode(jd_text, convert_to_numpy=True)
     
     # Normalize JD vector
@@ -274,7 +274,8 @@ def main():
             composite = (0.35 * title_score) + (0.25 * semantic_score) + (0.20 * (0.5 * skills_score + 0.5 * exp_score)) + (0.20 * behavioral_score)
             
             m_honeypot = 0.3 if feats["is_honeypot"] else 1.0
-            final_score = composite * m_notice * m_location * m_availability * m_work_mode * m_salary * m_trust * m_honeypot
+            m_it_service = 0.85 if feats.get("is_it_service_only") else 1.0
+            final_score = composite * m_notice * m_location * m_availability * m_work_mode * m_salary * m_trust * m_honeypot * m_it_service
                 
             scored_candidates.append({
                 "candidate": cand,
@@ -342,7 +343,8 @@ def main():
             composite = (0.35 * title_score) + (0.25 * semantic_score) + (0.20 * (0.5 * skills_score + 0.5 * exp_score)) + (0.20 * behavioral_score)
             
             m_honeypot = 0.3 if feats["is_honeypot"] else 1.0
-            final_score = composite * m_notice * m_location * m_availability * m_work_mode * m_salary * m_trust * m_honeypot
+            m_it_service = 0.85 if feats.get("is_it_service_only") else 1.0
+            final_score = composite * m_notice * m_location * m_availability * m_work_mode * m_salary * m_trust * m_honeypot * m_it_service
                 
             scored_candidates.append({
                 "candidate": cand,
@@ -352,7 +354,7 @@ def main():
             
     end_scoring = time.perf_counter()
     logger.info(f"Scored {len(candidates)} candidates in {end_scoring - start_scoring:.4f} seconds.")
-    logger.info(f"Exclusion Summary: Blocked {honeypot_count} honeypots and excluded {it_service_count} IT-service-only candidates.")
+    logger.info(f"Penalized {honeypot_count} honeypot traps and {it_service_count} IT-service-only backgrounds. No candidates were explicitly filtered out.")
             
     # 4. Sort and Deterministically break ties
     logger.info("Sorting candidates and resolving ties deterministically...")
@@ -387,7 +389,11 @@ def main():
                 
                 # Generate rank-consistent reasoning
                 rank = rank_idx + 1
-                reasoning = generate_reasoning(item["candidate"], rank, score, item["features"])
+                feats = item["features"]
+                it_service = f" Note: Their background is primarily in IT Services rather than Product, which resulted in a slightly lower fit score." if feats.get("is_it_service_only") else ""
+                honeypot = f" WARNING: This candidate matched honeypot traps and was severely penalized." if feats.get("is_honeypot") else ""
+                
+                reasoning = generate_reasoning(item["candidate"], rank, score, item["features"]) + it_service + honeypot
                 
                 writer.writerow([cid, rank, f"{score:.4f}", reasoning])
             else:

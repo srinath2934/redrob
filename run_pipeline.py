@@ -9,7 +9,7 @@ logger = offline_utils.setup_logging("run_pipeline")
 # Config
 CANDIDATES_PATH = r"d:\redrob\[PUB] India_runs_data_and_ai_challenge\India_runs_data_and_ai_challenge\candidates.jsonl"
 VALIDATOR_PATH = r"d:\redrob\[PUB] India_runs_data_and_ai_challenge\India_runs_data_and_ai_challenge\validate_submission.py"
-OUTPUT_CSV = "team_redrob.csv"
+OUTPUT_CSV = "team_srinath.csv"
 
 def verify_challenge_bundle():
     logger.info("--- [STEP] Verifying Challenge Bundle Files ---")

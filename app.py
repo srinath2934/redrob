@@ -129,10 +129,10 @@ def load_ranking_resources():
     bge_dir = "artifacts/bge_model"
     if os.path.exists(bge_dir):
         logger.info(f"Loading local BGE model from {bge_dir}...")
-        model = SentenceTransformer(bge_dir)
+        model = SentenceTransformer(bge_dir, device="cpu")
     else:
         logger.info("Local BGE model not found. Downloading BAAI/bge-small-en-v1.5...")
-        model = SentenceTransformer("BAAI/bge-small-en-v1.5")
+        model = SentenceTransformer("BAAI/bge-small-en-v1.5", device="cpu")
 
     cached_ids = {}
     features_cache = {}

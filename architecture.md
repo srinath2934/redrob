@@ -24,7 +24,7 @@ The ranking pipeline operates as a **lightweight pre-computed similarity and fea
                        ▼
              ┌──────────────────────┐
              │ 1.4 Save Cache files │ ──> Saves embeddings.npy & features.json to disk
-             └──────────────────────┘
+             └──────────┬───────────┘
 
                        │
                        ▼ (Ranking Step - 5 min Clock)
@@ -35,7 +35,7 @@ The ranking pipeline operates as a **lightweight pre-computed similarity and fea
                        │
                        ▼
              ┌──────────────────────┐
-             │ 2.7 Hard Exclusions  │ ──> Prunes Honeypots & IT-Service-Only
+             │ 2.7 Soft Penalties   │ ──> Down-weights Honeypots & IT-Services
              └──────────┬───────────┘
                        │
                        ▼
@@ -53,19 +53,6 @@ The ranking pipeline operates as a **lightweight pre-computed similarity and fea
              ┌──────────────────────┐
              │ 2.15 Export Top 100  │ ──> Writes ranked output CSV (with offline reasoning)
              └──────────────────────┘
-```      │ 6. Hybrid Scoring   │ ──> Title (35%) + Semantic (25%) +
-           │                     │     Skill/Exp (20%) + Behavioral (20%)
-           └──────────┬──────────┘
-                     │
-                     ▼
-           ┌─────────────────────┐
-           │ 7. Tie-Breaking     │ ──> Deterministic Candidate ID ascending
-           └──────────┬──────────┘
-                     │
-                     ▼
-           ┌─────────────────────┐
-           │ 8. Export Top 100   │ ──> Writes ranked output CSV (with offline reasoning)
-           └─────────────────────┘
 ```
 
 ---
@@ -125,9 +112,9 @@ All pipeline components write timestamped log entries to `artifacts/logs/pipelin
 
 ---
 
-## 5. Stage 2.7: Safety Filters (Honeypot & IT-Service Exclusions)
+## 5. Stage 2.7: Safety Filters (Honeypot & IT-Service Soft Penalties)
 
-To protect the ranking from disqualified candidates and meet the honeypot threshold limit ($<10\%$ in the top 100), the system evaluates each candidate against safety checkers. If a candidate triggers any of these checkers, they are assigned a score of `0` and immediately pruned.
+To protect the ranking from disqualified candidates and meet the honeypot threshold limit ($<10\%$ in the top 100), while complying with the rule that honeypots should not be hard-excluded (Rule 163), the system evaluates each candidate against safety checkers. If a candidate triggers any of these checkers, they are assigned a heavy soft-penalty multiplier instead of being hard-excluded from the dataset.
 
 ### A. Honeypot Profiling Heuristics
 Honeypots are synthetic profiles designed with impossible data patterns. The system flags a profile as a honeypot if it triggers any of the following:
@@ -139,11 +126,13 @@ Honeypots are synthetic profiles designed with impossible data patterns. The sys
 3.  **Future Dates**: Any start or end date in career history that falls after the reference date `2026-06-17`.
 4.  **Skill Duration Over-inflation**: Any individual skill where `duration_months` is greater than the total career experience (sum of all job durations) plus a 12-month grace period.
 
-### B. IT Consulting Services Exclusion
-The Job Description explicitly disqualifies candidates who have *only* worked at IT outsourcing/consulting firms. 
+*   **Soft Penalty**: If a candidate triggers any of these checks, a **0.3x score multiplier** is applied. They remain in the pool, but naturally sink to the bottom.
+
+### B. IT Consulting Services Penalty
+The Job Description explicitly flags candidates who have *only* worked at IT outsourcing/consulting firms. 
 *   **Definition of IT Service Firms**: `["TCS", "Infosys", "Wipro", "Accenture", "Cognizant", "Capgemini", "L&T", "Larsen & Toubro", "Tech Mahindra", "Mindtree", "HCL"]` (case-insensitive substring matches).
-*   **Rule**: If the candidate has $\ge 1$ job in their career history, and **every single job** is at one of these service firms, the candidate is disqualified.
-*   *Note*: If a candidate is currently at a service firm but has prior product-company experience, they remain in the pipeline.
+*   **Rule**: If the candidate has $\ge 1$ job in their career history, and **every single job** is at one of these service firms, they receive a **0.85x score multiplier penalty** (no hard exclusions are applied, letting the ranking engine naturally demote them).
+*   *Note*: If a candidate is currently at a service firm but has prior product-company experience, they remain unaffected by this penalty.
 
 ---
 
@@ -198,7 +187,7 @@ $$S_{\text{behavioral}} = 0.30 \times S_{\text{github}} + 0.25 \times S_{\text{r
 
 The composite score is multiplied by logistics modifiers to prioritize local and readily hireable candidates:
 
-$$\text{Final Score} = \text{Composite Score} \times M_{\text{notice}} \times M_{\text{location}}$$
+$$\text{Final Score} = \text{Composite Score} \times M_{\text{notice}} \times M_{\text{location}} \times M_{\text{availability}} \times M_{\text{work\_mode}} \times M_{\text{salary}} \times M_{\text{trust}} \times M_{\text{honeypot}} \times M_{\text{it\_service}}$$
 
 *   **Notice Period Modifier ($M_{\text{notice}}$)**:
     *   Notice period $\le 30$ days $\rightarrow$ $1.0$
