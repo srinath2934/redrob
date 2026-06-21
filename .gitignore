@@ -13,9 +13,13 @@ __pycache__/
 # Large Data & Artifacts (Challenge bundle - not committed)
 [PUB]*/
 
-# Artifact outputs (pre-computed by build_cache.py)
+# Artifact outputs (pre-computed by build_cache.py) — too large for GitHub
 artifacts/qdrant_index/
 artifacts/bge_model/
+artifacts/embeddings.npy
+artifacts/features.json
+artifacts/candidate_ids.json
+artifacts/logs/
 
 # Output / Generated files
 output/
