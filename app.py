@@ -258,10 +258,8 @@ def run_ranking_engine(uploaded_candidates_list, jd_text):
         title_mult = title_score / 100.0
         core_score = (0.55 * semantic_score) + (0.25 * (0.5 * skills_score + 0.5 * exp_score)) + (0.20 * behavioral_score)
         composite = title_mult * core_score
-        
-        m_honeypot = 0.3 if feats["is_honeypot"] else 1.0
-        m_it_service = 0.85 if feats.get("is_it_service_only") else 1.0
-        final_score = composite * m_notice * m_location * m_availability * m_work_mode * m_salary * m_trust * m_honeypot * m_it_service
+        # Apply logistics modifiers
+        final_score = composite * m_notice * m_location * m_availability * m_work_mode * m_salary * m_trust
             
         scored_candidates.append({
             "candidate": cand,
@@ -344,9 +342,9 @@ with col_right:
                 with m_col1:
                     st.markdown(f"<div class='metric-card'><div class='metric-title'>Processed Pool</div><div class='metric-value'>{total_cand}</div></div>", unsafe_allow_html=True)
                 with m_col2:
-                    st.markdown(f"<div class='metric-card'><div class='metric-title'>Honeypots Blocked</div><div class='metric-value'>{honeypots}</div></div>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='metric-card'><div class='metric-title'>Traps Identified</div><div class='metric-value'>{honeypots}</div></div>", unsafe_allow_html=True)
                 with m_col3:
-                    st.markdown(f"<div class='metric-card'><div class='metric-title'>Consultants Excluded</div><div class='metric-value'>{it_services}</div></div>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='metric-card'><div class='metric-title'>IT Services Scaled</div><div class='metric-value'>{it_services}</div></div>", unsafe_allow_html=True)
                 
                 # Build CSV
                 csv_buffer = io.StringIO()
