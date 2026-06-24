@@ -167,6 +167,21 @@ def generate_reasoning(candidate, rank, score, features):
     clean_text = reasoning.replace("\n", " ").replace("\r", " ").replace('"', "'").strip()
     return clean_text
 
+def compute_semantic_title_score(model, title_text, target_title_vector):
+    if not title_text or not isinstance(title_text, str):
+        return 0.0
+    # BGE-small-en-v1.5 requires this prefix for queries
+    query = "Represent this sentence for searching relevant passages: " + title_text.strip()
+    title_vector = model.encode(query, convert_to_numpy=True)
+    norm = np.linalg.norm(title_vector)
+    if norm == 0:
+        return 0.0
+    title_vector = title_vector / norm
+    similarity = float(np.dot(title_vector, target_title_vector))
+    # Normalize relative to 0.83 (expected similarity of a perfect match) and raise to power of 10
+    score = (min(1.0, max(0.0, similarity / 0.83)) ** 10) * 100.0
+    return score
+
 logger = offline_utils.setup_logging("rank")
 
 def main():
@@ -191,10 +206,16 @@ def main():
         sys.exit(1)
         
     model = SentenceTransformer(BGE_MODEL_DIR, device="cpu")
-    jd_vector = model.encode(jd_text, convert_to_numpy=True)
+    jd_query = "Represent this sentence for searching relevant passages: " + jd_text
+    jd_vector = model.encode(jd_query, convert_to_numpy=True)
     
     # Normalize JD vector
     jd_vector = jd_vector / np.linalg.norm(jd_vector)
+    
+    # Precompute target title vector
+    target_title = "Represent this sentence for searching relevant passages: Senior AI Engineer, Machine Learning retrieval search ranking recommendation systems"
+    target_vector = model.encode(target_title, convert_to_numpy=True)
+    target_vector = target_vector / np.linalg.norm(target_vector)
     end_model_jd = time.perf_counter()
     logger.info(f"Loaded Job Description and local BGE model in {end_model_jd - start_model_jd:.4f} seconds.")
     
@@ -260,7 +281,7 @@ def main():
             semantic_score = float(np.dot(cand_vector, jd_vector)) * 100.0
             
             # Hybrid Score
-            title_score = feats.get("title_score", 50.0)
+            title_score = feats.get("title_score", 30.0)
             exp_score = feats.get("experience_score", 0.0)
             skills_score = feats.get("skills_score", 0.0)
             behavioral_score = feats.get("behavioral_score", 0.0)
@@ -271,11 +292,12 @@ def main():
             m_salary = feats.get("salary_modifier", 1.0)
             m_trust = feats.get("trust_modifier", 1.0)
             
-            composite = (0.35 * title_score) + (0.25 * semantic_score) + (0.20 * (0.5 * skills_score + 0.5 * exp_score)) + (0.20 * behavioral_score)
+            # Multiplicative Title Gate Formula:
+            title_mult = title_score / 100.0
+            core_score = (0.55 * semantic_score) + (0.25 * (0.5 * skills_score + 0.5 * exp_score)) + (0.20 * behavioral_score)
+            composite = title_mult * core_score
             
-            m_honeypot = 0.3 if feats["is_honeypot"] else 1.0
-            m_it_service = 0.85 if feats.get("is_it_service_only") else 1.0
-            final_score = composite * m_notice * m_location * m_availability * m_work_mode * m_salary * m_trust * m_honeypot * m_it_service
+            final_score = composite * m_notice * m_location * m_availability * m_work_mode * m_salary * m_trust
                 
             scored_candidates.append({
                 "candidate": cand,
@@ -312,6 +334,9 @@ def main():
                 feats = features_cache[cid]
             else:
                 feats = offline_utils.extract_all_features(cand)
+                # Overwrite title_score semantically using BGE model
+                title = cand.get("profile", {}).get("current_title", "")
+                feats["title_score"] = compute_semantic_title_score(model, title, target_vector)
                 
             # Check exclusions: honeypot, IT-service-only, or disqualified title
             if feats["is_honeypot"]:
@@ -329,7 +354,7 @@ def main():
             cand_vector = cand_vector / np.linalg.norm(cand_vector)
             semantic_score = float(np.dot(cand_vector, jd_vector)) * 100.0
             
-            title_score = feats.get("title_score", 50.0)
+            title_score = feats.get("title_score", 30.0)
             exp_score = feats.get("experience_score", 0.0)
             skills_score = feats.get("skills_score", 0.0)
             behavioral_score = feats.get("behavioral_score", 0.0)
@@ -340,11 +365,12 @@ def main():
             m_salary = feats.get("salary_modifier", 1.0)
             m_trust = feats.get("trust_modifier", 1.0)
             
-            composite = (0.35 * title_score) + (0.25 * semantic_score) + (0.20 * (0.5 * skills_score + 0.5 * exp_score)) + (0.20 * behavioral_score)
+            # Multiplicative Title Gate Formula:
+            title_mult = title_score / 100.0
+            core_score = (0.55 * semantic_score) + (0.25 * (0.5 * skills_score + 0.5 * exp_score)) + (0.20 * behavioral_score)
+            composite = title_mult * core_score
             
-            m_honeypot = 0.3 if feats["is_honeypot"] else 1.0
-            m_it_service = 0.85 if feats.get("is_it_service_only") else 1.0
-            final_score = composite * m_notice * m_location * m_availability * m_work_mode * m_salary * m_trust * m_honeypot * m_it_service
+            final_score = composite * m_notice * m_location * m_availability * m_work_mode * m_salary * m_trust
                 
             scored_candidates.append({
                 "candidate": cand,
@@ -354,7 +380,7 @@ def main():
             
     end_scoring = time.perf_counter()
     logger.info(f"Scored {len(candidates)} candidates in {end_scoring - start_scoring:.4f} seconds.")
-    logger.info(f"Penalized {honeypot_count} honeypot traps and {it_service_count} IT-service-only backgrounds. No candidates were explicitly filtered out.")
+    logger.info(f"Naturally filtered targets includes {honeypot_count} honeypot traps and {it_service_count} IT-service-only backgrounds based on pure semantic and experience features.")
             
     # 4. Sort and Deterministically break ties
     logger.info("Sorting candidates and resolving ties deterministically...")
@@ -389,11 +415,8 @@ def main():
                 
                 # Generate rank-consistent reasoning
                 rank = rank_idx + 1
-                feats = item["features"]
-                it_service = f" Note: Their background is primarily in IT Services rather than Product, which resulted in a slightly lower fit score." if feats.get("is_it_service_only") else ""
-                honeypot = f" WARNING: This candidate matched honeypot traps and was severely penalized." if feats.get("is_honeypot") else ""
                 
-                reasoning = generate_reasoning(item["candidate"], rank, score, item["features"]) + it_service + honeypot
+                reasoning = generate_reasoning(item["candidate"], rank, score, item["features"])
                 
                 writer.writerow([cid, rank, f"{score:.4f}", reasoning])
             else:

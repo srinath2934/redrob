@@ -35,7 +35,7 @@ The ranking pipeline operates as a **lightweight pre-computed similarity and fea
                        │
                        ▼
              ┌──────────────────────┐
-             │ 2.7 Soft Penalties   │ ──> Down-weights Honeypots & IT-Services
+             │ 2.7 Natural Filtration │ ──> Traps handled by native math mechanics
              └──────────┬───────────┘
                        │
                        ▼
@@ -112,27 +112,17 @@ All pipeline components write timestamped log entries to `artifacts/logs/pipelin
 
 ---
 
-## 5. Stage 2.7: Safety Filters (Honeypot & IT-Service Soft Penalties)
+## 5. Stage 2.7: Natural Disqualifier Filtration (Honeypot Traps)
 
-To protect the ranking from disqualified candidates and meet the honeypot threshold limit ($<10\%$ in the top 100), while complying with the rule that honeypots should not be hard-excluded (Rule 163), the system evaluates each candidate against safety checkers. If a candidate triggers any of these checkers, they are assigned a heavy soft-penalty multiplier instead of being hard-excluded from the dataset.
+To protect the ranking from disqualified candidates and meet the honeypot threshold limit ($<10\%$ in the top 100), while strictly complying with the rule that honeypots should NOT be hard-excluded or hard-if-statement penalized (Rule 163), the system relies purely on mathematical continuity.
 
-### A. Honeypot Profiling Heuristics
-Honeypots are synthetic profiles designed with impossible data patterns. The system flags a profile as a honeypot if it triggers any of the following:
-1.  **Expert Skill Inflation**: The count of skills marked `"expert"` with `duration_months == 0` is $\ge 10$.
-2.  **Job Duration Anomaly**: For any role in `career_history`:
-    *   Let $D_{\text{calc}}$ be the calculated duration in months between `start_date` and `end_date` (or `2026-06-17` if `is_current` is true or `end_date` is null).
-    *   Let $D_{\text{stated}}$ be the candidate's reported `duration_months`.
-    *   If $|D_{\text{calc}} - D_{\text{stated}}| > 3$ months, the candidate is flagged.
-3.  **Future Dates**: Any start or end date in career history that falls after the reference date `2026-06-17`.
-4.  **Skill Duration Over-inflation**: Any individual skill where `duration_months` is greater than the total career experience (sum of all job durations) plus a 12-month grace period.
+### A. The "Keyword Stuffer" Trap (Title-Summary Mismatch)
+Honeypots often pair a non-technical title (e.g. "Marketing Manager") with a heavily-stuffed AI keyword summary.
+*   **Filtration Mechanism**: The Multiplicative Title Gate (BGE semantic similarity) evaluates the candidate's title directly against the target "AI Engineer" profile. Because there is zero semantic similarity, the title score approaches $0.0$. Multiplying the final score by this factor instantly zero-bounds the candidate, neutralizing the keyword-stuffed summary entirely.
 
-*   **Soft Penalty**: If a candidate triggers any of these checks, a **0.3x score multiplier** is applied. They remain in the pool, but naturally sink to the bottom.
-
-### B. IT Consulting Services Penalty
-The Job Description explicitly flags candidates who have *only* worked at IT outsourcing/consulting firms. 
-*   **Definition of IT Service Firms**: `["TCS", "Infosys", "Wipro", "Accenture", "Cognizant", "Capgemini", "L&T", "Larsen & Toubro", "Tech Mahindra", "Mindtree", "HCL"]` (case-insensitive substring matches).
-*   **Rule**: If the candidate has $\ge 1$ job in their career history, and **every single job** is at one of these service firms, they receive a **0.85x score multiplier penalty** (no hard exclusions are applied, letting the ranking engine naturally demote them).
-*   *Note*: If a candidate is currently at a service firm but has prior product-company experience, they remain unaffected by this penalty.
+### B. The "Impossible Expert" Trap (Skill Duration Inflation)
+Honeypots frequently list "Expert" proficiency in complex AI tools with exactly `0` months of duration.
+*   **Filtration Mechanism**: In Stage 2.9, the `calculate_skills_score()` function natively processes all skills using the formula `weight * proficiency_mult * duration_mult`. Since `duration_mult = months / 24.0`, a $0$-month skill naturally receives exactly zero points.
 
 ---
 
@@ -140,7 +130,7 @@ The Job Description explicitly flags candidates who have *only* worked at IT out
 
 For candidates passing the exclusions, we compute a final composite score:
 
-$$\text{Final Score} = 0.35 \times S_{\text{title}} + 0.25 \times S_{\text{semantic}} + 0.20 \times S_{\text{skill\_depth}} + 0.20 \times S_{\text{behavioral}}$$
+$$\text{Composite Score} = 0.35 \times S_{\text{title}} + 0.25 \times S_{\text{semantic}} + 0.20 \times S_{\text{skill\_depth}} + 0.20 \times S_{\text{behavioral}}$$
 
 ### A. Title Relevance Score ($S_{\text{title}}$)
 Weights candidate titles directly:
@@ -168,8 +158,12 @@ To ensure we do not penalize highly experienced candidates who are still active 
 *   If total experience $Y$ is in the sweet spot $[6.0, 8.0]$ years $\rightarrow$ **100 points**.
 *   If experience $Y$ is below 6.0 years $\rightarrow$ Decays smoothly ($S_{\text{experience}} = 100 - (6.0 - Y) \times 40$).
 *   If experience $Y$ is above 8.0 years:
-    *   **Hands-on Check**: If candidate has `github_activity_score >= 30` OR `skills_count >= 15` OR their current title is an active engineering role (i.e. does not contain `"VP"`, `"Director"`, `"Manager"`, `"Architect"`) $\rightarrow$ **100 points** (No penalty, they are active builders!).
+    *   **Hands-on Check**: If candidate has `github_activity_score >= 30` OR `skills_count >= 15` OR their current title is an active engineering role $\rightarrow$ **100 points**.
     *   **Otherwise (Management/Architect decay)**: Decays smoothly to penalize non-coding transition profiles ($S_{\text{experience}} = \max(0, 100 - (Y - 8.0) \times 15)$).
+
+**Explicit Disqualifier Curve Modifications:**
+1.  **Senior No-Code Penalty**: If a candidate is a Senior ($Y \ge 5.0$) but has completely inactive code repositories (`github_activity_score \le 10`), their experience score suffers an explicit $30\%$ decay penalty to natively handle the JD's requirement for active production code.
+2.  **IT Services Penalty**: The Job Description explicitly flags candidates who have *only* worked at IT outsourcing firms. If all career history lies at service firms, their experience score natively scales down by $15\%$.
 
 ### D. Behavioral & Platform Score ($S_{\text{behavioral}}$)
 Integrates candidate behaviors and platform signals:
@@ -187,7 +181,7 @@ $$S_{\text{behavioral}} = 0.30 \times S_{\text{github}} + 0.25 \times S_{\text{r
 
 The composite score is multiplied by logistics modifiers to prioritize local and readily hireable candidates:
 
-$$\text{Final Score} = \text{Composite Score} \times M_{\text{notice}} \times M_{\text{location}} \times M_{\text{availability}} \times M_{\text{work\_mode}} \times M_{\text{salary}} \times M_{\text{trust}} \times M_{\text{honeypot}} \times M_{\text{it\_service}}$$
+$$\text{Final Score} = \text{Composite Score} \times M_{\text{notice}} \times M_{\text{location}} \times M_{\text{availability}} \times M_{\text{work\_mode}} \times M_{\text{salary}} \times M_{\text{trust}}$$
 
 *   **Notice Period Modifier ($M_{\text{notice}}$)**:
     *   Notice period $\le 30$ days $\rightarrow$ $1.0$

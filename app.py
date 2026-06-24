@@ -158,6 +158,19 @@ def load_ranking_resources():
         
     return model, cached_ids, features_cache, embeddings_matrix
 
+def compute_semantic_title_score(model, title_text, target_title_vector):
+    if not title_text or not isinstance(title_text, str):
+        return 0.0
+    title_vector = model.encode(title_text.strip(), convert_to_numpy=True)
+    norm = np.linalg.norm(title_vector)
+    if norm == 0:
+        return 0.0
+    title_vector = title_vector / norm
+    similarity = float(np.dot(title_vector, target_title_vector))
+    # Normalize relative to 0.83 (expected similarity of a perfect match) and raise to power of 10
+    score = (min(1.0, max(0.0, similarity / 0.83)) ** 10) * 100.0
+    return score
+
 # Helper function to load local assets or default JD
 def get_jd_text():
     jd_file = "job_description.txt"
@@ -177,6 +190,11 @@ def run_ranking_engine(uploaded_candidates_list, jd_text):
         
     jd_vector = model.encode(jd_text, convert_to_numpy=True)
     jd_vector = jd_vector / np.linalg.norm(jd_vector)
+    
+    # Precompute target title vector
+    target_title = "Senior AI Engineer, Machine Learning retrieval search ranking recommendation systems"
+    target_vector = model.encode(target_title, convert_to_numpy=True)
+    target_vector = target_vector / np.linalg.norm(target_vector)
     
     use_cache = len(cached_ids) > 0 and features_cache and embeddings_matrix is not None
     
@@ -210,6 +228,9 @@ def run_ranking_engine(uploaded_candidates_list, jd_text):
             feats = features_cache[cid]
         else:
             feats = offline_utils.extract_all_features(cand)
+            # Overwrite title_score semantically using BGE model
+            title = cand.get("profile", {}).get("current_title", "")
+            feats["title_score"] = compute_semantic_title_score(model, title, target_vector)
             
         # Fetch embedding
         if use_cache and cid in cached_ids:
@@ -221,7 +242,7 @@ def run_ranking_engine(uploaded_candidates_list, jd_text):
         cand_vector = cand_vector / np.linalg.norm(cand_vector)
         semantic_score = float(np.dot(cand_vector, jd_vector)) * 100.0
         
-        title_score = feats.get("title_score", 50.0)
+        title_score = feats.get("title_score", 30.0)
         exp_score = feats.get("experience_score", 0.0)
         skills_score = feats.get("skills_score", 0.0)
         behavioral_score = feats.get("behavioral_score", 0.0)
@@ -232,10 +253,14 @@ def run_ranking_engine(uploaded_candidates_list, jd_text):
         m_salary = feats.get("salary_modifier", 1.0)
         m_trust = feats.get("trust_modifier", 1.0)
         
-        composite = (0.35 * title_score) + (0.25 * semantic_score) + (0.20 * (0.5 * skills_score + 0.5 * exp_score)) + (0.20 * behavioral_score)
+        # Multiplicative Title Gate Formula:
+        title_mult = title_score / 100.0
+        core_score = (0.55 * semantic_score) + (0.25 * (0.5 * skills_score + 0.5 * exp_score)) + (0.20 * behavioral_score)
+        composite = title_mult * core_score
         
         m_honeypot = 0.3 if feats["is_honeypot"] else 1.0
-        final_score = composite * m_notice * m_location * m_availability * m_work_mode * m_salary * m_trust * m_honeypot
+        m_it_service = 0.85 if feats.get("is_it_service_only") else 1.0
+        final_score = composite * m_notice * m_location * m_availability * m_work_mode * m_salary * m_trust * m_honeypot * m_it_service
             
         scored_candidates.append({
             "candidate": cand,

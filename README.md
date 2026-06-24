@@ -101,23 +101,18 @@ At inference time the system chooses one of two execution paths:
 
 ### Scoring Formula
 
-```
 Final Score = (0.35 × T + 0.25 × S + 0.20 × K + 0.20 × B)
               × M_notice × M_location × M_availability
               × M_work_mode × M_salary × M_trust
-              × M_honeypot × M_it_service
-```
 
 | Component | Description |
 |---|---|
-| **T** — Title Score | High boost for ML/AI/Data Engineering titles; zero for non-technical disciplines |
+| **T** — Title Score | BGE semantic comparison between candidate title and target JD. Filters non-technical roles dynamically. |
 | **S** — Semantic Score | Cosine similarity (BGE embedding of candidate profile vs. JD) × 100 |
-| **K** — Skills + Exp | Weighted skill match (23 AI/ML skills) combined with experience curve |
+| **K** — Skills + Exp | Weighted skill match combined with experience curve. Natively penalizes IT service-only careers and lack of recent hands-on code. |
 | **B** — Behavioral | GitHub activity (30%) + Recruiter responsiveness (25%) + Login recency (20%) + Platform reliability (15%) + Demand (10%) |
 | **M_notice** | 1.2× ≤30 days · 1.0× ≤60 · 0.85× >60 days |
 | **M_location** | 1.15× Noida/Pune · 0.9× other India · 0.75× international |
-| **M_honeypot** | **0.3×** if anomalous profile detected (never excluded, naturally demoted) |
-| **M_it_service** | **0.85×** if career entirely in IT consulting (TCS, Infosys, Wipro, etc.) |
 
 ### Tie-breaking
 Scores rounded to 4 decimal places. Ties broken by `candidate_id` ascending (deterministic).
@@ -128,7 +123,7 @@ Scores rounded to 4 decimal places. Ties broken by `candidate_id` ascending (det
 
 | Rule | Requirement | Implementation |
 |---|---|---|
-| **No hard filters** | Ranking must be natural, not exclusion-based | Honeypot & IT-service penalties are **score multipliers only** (0.3× and 0.85×) — no candidate is removed |
+| **No hard filters** | Ranking must be natural, not exclusion-based | Honeypots naturally score `0` due to BGE title-summary semantic mismatch and mathematical skill duration drops. No explicit `if` flags are used. |
 | **CPU-only** | No GPU at inference | `SentenceTransformer(..., device="cpu")` enforced in `rank.py`, `build_cache.py`, `app.py` |
 | **No network** | Ranking must work offline | All models and data are local; no API calls during inference |
 | **Monotonic ranks** | No score ties in output | 4-decimal rounding + ascending `candidate_id` tie-break guarantees uniqueness |

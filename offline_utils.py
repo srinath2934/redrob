@@ -182,106 +182,56 @@ def check_it_service_only(candidate):
     return True
 
 def calculate_title_score(title):
-    if not title:
-        return 50.0
-    title_lower = title.lower()
-    
-    # 1. Hard Trap Titles: Non-technical roles that should never rank (0 points)
-    # Order matters: check more specific terms first
-    hard_trap_keywords = [
-        "marketing", "sales", "recruiter", "hr ", "human resource",
-        "operations manager", "business analyst", "accountant", "finance",
-        "graphic design", "graphic designer", "illustrator",
-        "content writer", "copywriter", "creative director", "brand manager",
-        "legal", "lawyer", "attorney", "paralegal",
-        "supply chain", "procurement", "logistics",
-        "customer support", "customer service",
-        "project manager",  # non-technical PM is a trap
-        "civil engineer", "mechanical engineer", "chemical engineer",
-        "electrical engineer", "aerospace engineer", "structural engineer",
-        "product manager",  # PM (not engineering) is lower tier
-    ]
-    for kw in hard_trap_keywords:
-        if kw in title_lower:
-            return 0.0
+    # This is a placeholder default. The actual title score is computed
+    # semantically using the BGE model in build_cache.py, rank.py, and app.py.
+    return 30.0
 
-    # 2. Target ML/AI Engineering Title (100 points) - check BEFORE generic "engineer"
-    ml_keywords = [
-        "machine learning", " ml ", "ml engineer", "ml researcher",
-        " ai ", "ai engineer", "ai researcher", "applied ai",
-        "search engineer", "search scientist",
-        "ranking", "retrieval", "recommendation",
-        "nlp", "natural language", "computer vision",
-        "deep learning", "research engineer", "research scientist"
-    ]
-    for kw in ml_keywords:
-        if kw in title_lower:
-            return 100.0
-
-    # Edge case: title IS exactly "AI" or starts with it
-    if title_lower.startswith("ai") or " ai" in title_lower:
-        return 100.0
-
-    # 3. Technical Software Pipeline Title (70 points)
-    # Only award "engineer" points if it's a software/tech discipline
-    tech_keywords = [
-        "software engineer", "software developer",
-        "backend engineer", "backend developer",
-        "frontend engineer", "fullstack", "full stack",
-        "data engineer", "data scientist", "data analyst",
-        "platform engineer", "infrastructure engineer",
-        "cloud engineer", "devops engineer", "sre",
-        "systems engineer", "systems developer",
-        "java developer", "python developer", ".net developer",
-        "android engineer", "ios engineer",
-        "qa engineer", "test engineer", "sdet",
-        "security engineer",
-    ]
-    for kw in tech_keywords:
-        if kw in title_lower:
-            return 70.0
-
-    # If title contains only bare "engineer" (no qualifier matched above), check context
-    # Generic "engineer" without a software qualifier is unknown - treat as neutral
-    if "engineer" in title_lower or "developer" in title_lower:
-        # Last safety check: if any non-tech discipline is in the title, return 0
-        non_tech_qualifiers = [
-            "civil", "mechanical", "chemical", "electrical", "aerospace",
-            "structural", "process", "petroleum", "biomedical", "industrial",
-            "manufacturing", "quality", "field", "hardware",
-        ]
-        for nq in non_tech_qualifiers:
-            if nq in title_lower:
-                return 0.0
-        # Bare "engineer" with no context - give moderate score
-        return 60.0
-            
-    return 50.0
-
-def calculate_experience_score(profile, skills_count):
+def calculate_experience_score(profile, skills_count, is_it_service_only=False):
     years = profile.get("years_of_experience", 0)
     github_activity_score = profile.get("github_activity_score", 0)  # parsed from profile/signals later
     current_title = profile.get("current_title", "").lower()
     
-    if 6.0 <= years <= 8.0:
-        return 100.0
-    elif years < 6.0:
-        return max(0.0, 100.0 - (6.0 - years) * 40.0)
-    else:  # years > 8.0
+    score = 100.0
+    if years < 6.0:
+        score = max(0.0, 100.0 - (6.0 - years) * 40.0)
+    elif years > 8.0:
         # Hands-on Check: if active builder, exempt from decay
         is_management = any(kw in current_title for kw in ["vp", "director", "manager", "architect", "lead"])
         if github_activity_score >= 30 or skills_count >= 15 or not is_management:
-            return 100.0
+            score = 100.0
         else:
-            return max(0.0, 100.0 - (years - 8.0) * 15.0)
+            score = max(0.0, 100.0 - (years - 8.0) * 15.0)
+
+    # 1. Senior No-Code Penalty (Rule 3: Senior title but no production code written in last 18 months)
+    if years >= 5.0 and github_activity_score <= 10:
+        score *= 0.70  # 30% penalty for no recent hands-on code activity
+        
+    # 2. IT Service Penalty (Rule 4: Only worked at IT consulting firms for ENTIRE career)
+    if is_it_service_only:
+        score *= 0.85  # 15% penalty for lack of product company experience
+        
+    return score
 
 def calculate_skills_score(skills):
     if not skills:
         return 0.0
         
-    core_retrieval = {"pinecone", "milvus", "faiss", "qdrant", "weaviate", "bge", "e5", "vector search", "dense retrieval"}
-    core_ranking = {"learning-to-rank", "ndcg", "map", "mrr", "ranking", "hybrid search", "elasticsearch"}
-    core_ml = {"nlp", "machine learning", "deep learning", "pytorch", "huggingface", "fine-tuning"}
+    core_retrieval = {
+        "pinecone", "milvus", "faiss", "qdrant", "weaviate", "bge", "e5",
+        "vector search", "dense retrieval", "sparse retrieval", "ann search",
+        "embedding model", "sentence transformer", "vector db", "vector database"
+    }
+    core_ranking = {
+        "learning-to-rank", "ndcg", "map", "mrr", "ranking", "hybrid search",
+        "elasticsearch", "solr", "opensearch", "lexical search", "bm25",
+        "information retrieval", "ir evaluation"
+    }
+    core_ml = {
+        "nlp", "machine learning", "deep learning", "pytorch", "huggingface", "fine-tuning",
+        "recommendation systems", "mlflow", "kubeflow", "spark", "distributed training",
+        "transformer", "bert", "llm", "embeddings", "semantic search", "a/b testing",
+        "tensorflow", "scikit-learn", "xgboost"
+    }
     
     total_score = 0.0
     for s in skills:
@@ -478,7 +428,7 @@ def extract_all_features(candidate):
     if signals.get("github_activity_score") == -1:
         profile_with_github["github_activity_score"] = 0.0
         
-    exp_score = calculate_experience_score(profile_with_github, len(skills))
+    exp_score = calculate_experience_score(profile_with_github, len(skills), is_it_service)
     
     # 360-degree skills score (blends resume and Redrob assessment scores)
     skills_score = calculate_skills_score(skills)

@@ -11,7 +11,7 @@ __pycache__/
 *.pyd
 
 # Large Data & Artifacts (Challenge bundle - not committed)
-[PUB]*/
+\[PUB\]*/
 
 # Artifact outputs (pre-computed by build_cache.py) — too large for GitHub
 artifacts/qdrant_index/
