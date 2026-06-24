@@ -161,7 +161,8 @@ def load_ranking_resources():
 def compute_semantic_title_score(model, title_text, target_title_vector):
     if not title_text or not isinstance(title_text, str):
         return 0.0
-    title_vector = model.encode(title_text.strip(), convert_to_numpy=True)
+    query = "Represent this sentence for searching relevant passages: " + title_text.strip()
+    title_vector = model.encode(query, convert_to_numpy=True)
     norm = np.linalg.norm(title_vector)
     if norm == 0:
         return 0.0
@@ -191,8 +192,8 @@ def run_ranking_engine(uploaded_candidates_list, jd_text):
     jd_vector = model.encode(jd_text, convert_to_numpy=True)
     jd_vector = jd_vector / np.linalg.norm(jd_vector)
     
-    # Precompute target title vector
-    target_title = "Senior AI Engineer, Machine Learning retrieval search ranking recommendation systems"
+    # Precompute target title vector with BGE prefix
+    target_title = "Represent this sentence for searching relevant passages: Senior AI Engineer, Machine Learning retrieval search ranking recommendation systems"
     target_vector = model.encode(target_title, convert_to_numpy=True)
     target_vector = target_vector / np.linalg.norm(target_vector)
     
