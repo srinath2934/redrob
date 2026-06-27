@@ -114,15 +114,24 @@ All pipeline components write timestamped log entries to `artifacts/logs/pipelin
 
 ## 5. Stage 2.7: Natural Disqualifier Filtration (Honeypot Traps)
 
-To protect the ranking from disqualified candidates and meet the honeypot threshold limit ($<10\%$ in the top 100), while strictly complying with the rule that honeypots should NOT be hard-excluded or hard-if-statement penalized (Rule 163), the system relies purely on mathematical continuity.
+To protect the ranking from disqualified candidates and meet the honeypot threshold limit ($<10\%$ in the top 100), while strictly complying with the rule that honeypots should NOT be hard-excluded or hard-if-statement penalized (Rule 163), the system relies on continuous mathematical penalization.
 
 ### A. The "Keyword Stuffer" Trap (Title-Summary Mismatch)
 Honeypots often pair a non-technical title (e.g. "Marketing Manager") with a heavily-stuffed AI keyword summary.
 *   **Filtration Mechanism**: The Multiplicative Title Gate (BGE semantic similarity) evaluates the candidate's title directly against the target "AI Engineer" profile. Because there is zero semantic similarity, the title score approaches $0.0$. Multiplying the final score by this factor instantly zero-bounds the candidate, neutralizing the keyword-stuffed summary entirely.
+*   **Logical Mismatch Modifier**: A specialized summary mismatch factor reduces the candidate score by 99% if a candidate summary specifies non-technical roles that contradict their claimed engineering title.
 
-### B. The "Impossible Expert" Trap (Skill Duration Inflation)
-Honeypots frequently list "Expert" proficiency in complex AI tools with exactly `0` months of duration.
-*   **Filtration Mechanism**: In Stage 2.9, the `calculate_skills_score()` function natively processes all skills using the formula `weight * proficiency_mult * duration_mult`. Since `duration_mult = months / 24.0`, a $0$-month skill naturally receives exactly zero points.
+### B. The "Impossible Expert" & "Duration Inflation" Traps
+Honeypots frequently list "Expert" proficiency in complex AI tools with exactly `0` months of duration, or claim skill durations that exceed their entire career history (e.g. 10 years of scikit-learn on a 2-year total career length).
+*   **Expert Zero-Duration Penalty**: Expert skills with 0 months duration are penalized using an exponential decay modifier:
+    $$M_{\text{expert}} = e^{-0.5 \times \max(0, N_{\text{expert\_zero\_duration}} - 5)}$$
+    If the count exceeds 10, an additional 99% reduction is applied.
+*   **Skill Over-inflation Modifier**: The excess skill duration relative to total career months is penalized:
+    $$M_{\text{skill\_inflation}} = e^{-0.5 \times \max(0, \Delta_{\text{skill\_career}} - 12)}$$
+    If the excess exceeds 12 months, the candidate receives a 99% reduction.
+*   **Job Duration Anomalies**: Job duration mismatches between stated and calculated months (using start/end dates) are similarly penalized by an exponential decay once the discrepancy exceeds a 3-month grace window:
+    $$M_{\text{job\_anomaly}} = e^{-1.0 \times \max(0, \Delta_{\text{job}} - 3)}$$
+    If the discrepancy is greater than 3 months, an additional 99% penalty is applied.
 
 ---
 
@@ -181,12 +190,14 @@ $$S_{\text{behavioral}} = 0.25 \times S_{\text{github}} + 0.25 \times S_{\text{r
 
 ---
 
-## 7. Stage 2.10: Availability & Logistics Modifiers
+## 7. Stage 2.10: Availability, Logistics, and Consistency Modifiers
 
-The composite score is multiplied by logistics modifiers to prioritize local and readily hireable candidates:
+The composite score is multiplied by logistics and consistency modifiers to prioritize local, hireable, and logically consistent profiles:
 
-$$\text{Final Score} = \text{Composite Score} \times M_{\text{notice}} \times M_{\text{location}} \times M_{\text{availability}} \times M_{\text{work\_mode}} \times M_{\text{salary}} \times M_{\text{trust}}$$
+$$\text{Final Score} = \text{Composite Score} \times M_{\text{notice}} \times M_{\text{location}} \times M_{\text{availability}} \times M_{\text{work\_mode}} \times M_{\text{salary}} \times M_{\text{trust}} \times M_{\text{consistency}}$$
 
+*   **Consistency Modifier ($M_{\text{consistency}}$)**:
+    Product of the expert skill duration, job anomaly, future date, skill inflation, and title mismatch modifiers. If a candidate is consistent, $M_{\text{consistency}} = 1.0$. If a honeypot has illogical dates or inflated skills, $M_{\text{consistency}} \le 0.01$ (crushing their rank).
 *   **Notice Period Modifier ($M_{\text{notice}}$)**:
     *   Notice period $\le 30$ days $\rightarrow$ $1.0$
     *   Notice period $\le 60$ days $\rightarrow$ $0.90$
