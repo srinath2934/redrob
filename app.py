@@ -240,8 +240,12 @@ def run_ranking_engine(uploaded_candidates_list, jd_text):
         else:
             cand_vector = uncached_embeddings[i]
             
-        cand_vector = cand_vector / np.linalg.norm(cand_vector)
-        similarity = float(np.dot(cand_vector, jd_vector))
+        norm = np.linalg.norm(cand_vector)
+        if norm > 0:
+            cand_vector = cand_vector / norm
+            similarity = float(np.dot(cand_vector, jd_vector))
+        else:
+            similarity = 0.0
         semantic_score = ((similarity - 0.70) / 0.15) * 100.0
         
         title_score = feats.get("title_score", 30.0)
