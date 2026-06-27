@@ -3,6 +3,7 @@ import sys
 import json
 import logging
 from datetime import datetime
+import math
 
 def setup_logging(name, log_filename="pipeline.log"):
     os.makedirs(os.path.join("artifacts", "logs"), exist_ok=True)
@@ -263,7 +264,7 @@ def calculate_skills_score(skills):
             
         # 3. Get duration multiplier
         dur = s.get("duration_months", 0)
-        dur_mult = min(1.0, dur / 24.0)  # caps at 24 months (2 years)
+        dur_mult = min(1.0, dur / 60.0)  # caps at 60 months (5 years)
         
         total_score += (weight * prof_mult * dur_mult)
         
@@ -410,6 +411,94 @@ def calculate_assessment_score(signals):
         return sum(relevant_scores) / len(relevant_scores)
     return None
 
+def calculate_consistency_modifier(candidate):
+    # 1. Expert skills with 0 duration penalty
+    skills = candidate.get("skills", [])
+    expert_zero_dur = 0
+    for s in skills:
+        prof = s.get("proficiency", "").lower()
+        dur = s.get("duration_months", 0)
+        if prof == "expert" and dur == 0:
+            expert_zero_dur += 1
+    m_expert = math.exp(-0.5 * max(0.0, expert_zero_dur - 5.0))
+    if expert_zero_dur >= 10:
+        m_expert *= 0.01
+
+    # 2 & 3. Job Duration Anomaly & Future Dates
+    career_history = candidate.get("career_history", [])
+    total_career_months = 0
+    max_duration_diff = 0.0
+    max_future_months = 0.0
+    
+    for job in career_history:
+        start_str = job.get("start_date")
+        end_str = job.get("end_date")
+        is_current = job.get("is_current", False)
+        stated_dur = job.get("duration_months", 0)
+        
+        start_date = parse_date(start_str)
+        end_date = parse_date(end_str) if not is_current else REF_DATE
+        if not end_date:
+            end_date = REF_DATE
+            
+        if start_date and start_date > REF_DATE:
+            diff_days = (start_date - REF_DATE).days
+            max_future_months = max(max_future_months, diff_days / 30.0)
+        if end_date and end_date > REF_DATE:
+            diff_days = (end_date - REF_DATE).days
+            max_future_months = max(max_future_months, diff_days / 30.0)
+            
+        calc_dur = calculate_duration_months(start_str, end_str, is_current)
+        total_career_months += calc_dur
+        
+        diff = abs(calc_dur - stated_dur)
+        if diff > max_duration_diff:
+            max_duration_diff = diff
+
+    m_future = math.exp(-3.0 * max_future_months)
+    if max_future_months > 0.0:
+        m_future *= 0.01
+        
+    m_job_anomaly = math.exp(-1.0 * max(0.0, max_duration_diff - 3.0))
+    if max_duration_diff > 3.0:
+        m_job_anomaly *= 0.01
+
+    # 4. Skill Duration Over-inflation
+    max_skill_over = 0.0
+    for s in skills:
+        dur = s.get("duration_months", 0)
+        over = dur - total_career_months
+        if over > max_skill_over:
+            max_skill_over = over
+            
+    m_skill_inflation = math.exp(-0.5 * max(0.0, max_skill_over - 12.0))
+    if max_skill_over > 12.0:
+        m_skill_inflation *= 0.01
+
+    # 5. Title-Summary Mismatch
+    profile = candidate.get("profile", {})
+    current_title = profile.get("current_title", "").lower()
+    summary = profile.get("summary", "").lower()
+    
+    mismatch_patterns = [
+        ("marketing manager", ["marketing", "sales", "brand"]),
+        ("customer support", ["support", "customer", "service"]),
+        ("graphic designer", ["graphic", "design", "visual", "illustrat"]),
+        ("content writer", ["content", "writing", "copywrite"]),
+        ("sales manager", ["sales", "revenue", "business development"]),
+        ("hr manager", ["hr", "human resource", "recruitment", "talent acquisition"]),
+    ]
+    
+    m_mismatch = 1.0
+    for inject_keyword, valid_title_terms in mismatch_patterns:
+        if inject_keyword in summary:
+            title_matches = any(term in current_title for term in valid_title_terms)
+            if not title_matches:
+                m_mismatch = 0.01
+                break
+
+    return m_expert * m_future * m_job_anomaly * m_skill_inflation * m_mismatch
+
 def extract_all_features(candidate):
     profile = candidate.get("profile", {})
     skills = candidate.get("skills", [])
@@ -421,6 +510,7 @@ def extract_all_features(candidate):
     
     # Calculate components
     title_score = calculate_title_score(profile.get("current_title", ""))
+    consistency_modifier = calculate_consistency_modifier(candidate)
     
     # Mix github activity score into experience calculation
     profile_with_github = profile.copy()
@@ -455,6 +545,7 @@ def extract_all_features(candidate):
         "work_mode_modifier": m_work_mode,
         "salary_modifier": m_salary,
         "trust_modifier": m_trust,
+        "consistency_modifier": consistency_modifier,
         "raw_profile": {
             "years_of_experience": profile.get("years_of_experience", 0),
             "current_title": profile.get("current_title", ""),

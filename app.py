@@ -168,8 +168,8 @@ def compute_semantic_title_score(model, title_text, target_title_vector):
         return 0.0
     title_vector = title_vector / norm
     similarity = float(np.dot(title_vector, target_title_vector))
-    # Normalize relative to 0.83 (expected similarity of a perfect match) and raise to power of 10
-    score = (min(1.0, max(0.0, similarity / 0.83)) ** 10) * 100.0
+    # Normalize relative to 0.75 (expected similarity of a perfect match) and raise to power of 10
+    score = (min(1.0, max(0.0, similarity / 0.75)) ** 10) * 100.0
     return score
 
 # Helper function to load local assets or default JD
@@ -241,7 +241,8 @@ def run_ranking_engine(uploaded_candidates_list, jd_text):
             cand_vector = uncached_embeddings[i]
             
         cand_vector = cand_vector / np.linalg.norm(cand_vector)
-        semantic_score = float(np.dot(cand_vector, jd_vector)) * 100.0
+        similarity = float(np.dot(cand_vector, jd_vector))
+        semantic_score = ((similarity - 0.70) / 0.15) * 100.0
         
         title_score = feats.get("title_score", 30.0)
         exp_score = feats.get("experience_score", 0.0)
@@ -253,13 +254,14 @@ def run_ranking_engine(uploaded_candidates_list, jd_text):
         m_work_mode = feats.get("work_mode_modifier", 1.0)
         m_salary = feats.get("salary_modifier", 1.0)
         m_trust = feats.get("trust_modifier", 1.0)
+        m_consistency = feats.get("consistency_modifier", 1.0)
         
         # Multiplicative Title Gate Formula:
         title_mult = title_score / 100.0
         core_score = (0.55 * semantic_score) + (0.25 * (0.5 * skills_score + 0.5 * exp_score)) + (0.20 * behavioral_score)
         composite = title_mult * core_score
-        # Apply logistics modifiers
-        final_score = composite * m_notice * m_location * m_availability * m_work_mode * m_salary * m_trust
+        # Apply logistics and consistency modifiers
+        final_score = composite * m_notice * m_location * m_availability * m_work_mode * m_salary * m_trust * m_consistency
             
         scored_candidates.append({
             "candidate": cand,

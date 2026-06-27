@@ -40,8 +40,8 @@ The ranking pipeline operates as a **lightweight pre-computed similarity and fea
                        │
                        ▼
              ┌──────────────────────┐
-             │ 2.9 Hybrid Scoring   │ ──> Title (35%) + Semantic (25%) +
-             │                      │     Skill/Exp (20%) + Behavioral (20%)
+             │ 2.9 Hybrid Scoring   │ ──> Core: Semantic (55%) + Skill/Exp (25%) +
+             │                      │     Behavioral (20%). Scaled by Title Gate.
              └──────────┬───────────┘
                        │
                        ▼
@@ -128,19 +128,23 @@ Honeypots frequently list "Expert" proficiency in complex AI tools with exactly 
 
 ## 6. Stage 2.9: Hybrid Scoring Formula
 
-For candidates passing the exclusions, we compute a final composite score:
+For candidates passing the exclusions, we compute a final composite score by first calculating a core score and then scaling it continuously by the title gate:
 
-$$\text{Composite Score} = 0.35 \times S_{\text{title}} + 0.25 \times S_{\text{semantic}} + 0.20 \times S_{\text{skill\_depth}} + 0.20 \times S_{\text{behavioral}}$$
+$$\text{Core Score} = 0.55 \times S_{\text{semantic}} + 0.25 \times S_{\text{skill\_depth}} + 0.20 \times S_{\text{behavioral}}$$
+$$\text{Composite Score} = \text{Core Score} \times \left( \frac{S_{\text{title}}}{100} \right)$$
 
-### A. Title Relevance Score ($S_{\text{title}}$)
-Weights candidate titles directly:
-*   **Target ML/AI Engineering Title**: Current title contains `"Machine Learning"`, `"ML"`, `"AI"`, `"Search"`, `"Ranking"`, or `"Retrieval"` $\rightarrow$ **100 points**.
-*   **Technical Pipeline Title**: Current title contains `"Software"`, `"Backend"`, or `"Data"` with ML exposure $\rightarrow$ **70 points**.
-*   **Trap Titles (Disqualified)**: Current title contains `"Marketing"`, `"Sales"`, `"Recruiter"`, `"HR"`, `"Operations"`, or `"Consultant"` $\rightarrow$ **0 points**.
+### A. The Multiplicative Title Gate ($S_{\text{title}}$)
+We avoid hardcoded if-statements (as required by Hackathon rules) by using a purely continuous semantic filter:
+*   We use the **BGE Embedding Model** to compare the candidate's current title against the target `"Senior AI Engineer"`.
+*   A candidate with `"Recommendation Systems Engineer"` scores $\approx 50-100$, allowing a high multiplier.
+*   A candidate with a trap title like `"Marketing Manager"` or `"Full Stack Developer"` yields $\approx 0\%$ semantic overlap, resulting in $S_{\text{title}} \approx 0.02$. This multiplier crushes their core score to mathematically eliminate them without explicit code logic.
 
 ### B. Semantic Match Score ($S_{\text{semantic}}$)
-*   Cosine similarity between BGE Small encoded vector of the Job Description and BGE Small encoded vector of the candidate profile (headline + summary + career history titles).
-*   Calculated via NumPy dot product between pre-computed candidate embeddings and the JD vector, normalized to a $[0, 100]$ scale.
+*   **Weight**: 55% of Core Score
+*   Uses a **Shifted Cosine Similarity** to naturally produce negative scores for irrelevant profiles:
+    $$S_{\text{semantic}} = \frac{\text{CosSim}(\vec{v}_{\text{candidate}}, \vec{v}_{\text{JD}}) - 0.70}{0.15} \times 100$$
+*   Cosine similarity is computed via NumPy dot product between pre-computed BGE Small candidate embeddings and the JD vector.
+*   A perfect AI Engineer match (CosSim ≈ 0.82) scores **+82 points**. A general backend developer (CosSim ≈ 0.70) scores **0 points**. A Marketing Manager honeypot (CosSim ≈ 0.55) scores **−100 points**, naturally burying them at the bottom.
 
 ### C. Skill Depth & Experience Fit Score ($S_{\text{skill\_depth}}$)
 Calculated as:
@@ -167,7 +171,7 @@ To ensure we do not penalize highly experienced candidates who are still active 
 
 ### D. Behavioral & Platform Score ($S_{\text{behavioral}}$)
 Integrates candidate behaviors and platform signals:
-$$S_{\text{behavioral}} = 0.30 \times S_{\text{github}} + 0.25 \times S_{\text{responsiveness}} + 0.20 \times S_{\text{activity}} + 0.15 \times S_{\text{reliability}} + 0.10 \times S_{\text{demand}}$$
+$$S_{\text{behavioral}} = 0.25 \times S_{\text{github}} + 0.25 \times S_{\text{responsiveness}} + 0.20 \times S_{\text{activity}} + 0.15 \times S_{\text{reliability}} + 0.15 \times S_{\text{demand}}$$
 
 1.  **GitHub Score ($S_{\text{github}}$)**: Claims `github_activity_score` directly (or 0 if `-1`).
 2.  **Responsiveness ($S_{\text{responsiveness}}$)**: `recruiter_response_rate` (0 to 100) minus a penalty for high response latency (`avg_response_time_hours`).

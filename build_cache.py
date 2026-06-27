@@ -37,14 +37,15 @@ def get_candidate_summary_text(candidate):
 def compute_semantic_title_score(model, title_text, target_title_vector):
     if not title_text or not isinstance(title_text, str):
         return 0.0
-    title_vector = model.encode(title_text.strip(), convert_to_numpy=True)
+    query = "Represent this sentence for searching relevant passages: " + title_text.strip()
+    title_vector = model.encode(query, convert_to_numpy=True)
     norm = np.linalg.norm(title_vector)
     if norm == 0:
         return 0.0
     title_vector = title_vector / norm
     similarity = float(np.dot(title_vector, target_title_vector))
-    # Normalize relative to 0.83 (expected similarity of a perfect match) and raise to power of 10
-    score = (min(1.0, max(0.0, similarity / 0.83)) ** 10) * 100.0
+    # Normalize relative to 0.75 (expected similarity of a perfect match) and raise to power of 10
+    score = (min(1.0, max(0.0, similarity / 0.75)) ** 10) * 100.0
     return score
 
 logger = offline_utils.setup_logging("build_cache")
@@ -66,7 +67,7 @@ def main():
     logger.info("BGE model loaded successfully.")
     
     # Precompute target title vector
-    target_title = "Senior AI Engineer, Machine Learning retrieval search ranking recommendation systems"
+    target_title = "Represent this sentence for searching relevant passages: Senior AI Engineer, Machine Learning retrieval search ranking recommendation systems"
     target_vector = model.encode(target_title, convert_to_numpy=True)
     target_vector = target_vector / np.linalg.norm(target_vector)
     
