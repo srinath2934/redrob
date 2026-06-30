@@ -84,6 +84,54 @@ redrob/
 ## 🧠 Architecture & Mathematical Formulations
 
 ### 1. Two-Phase Architecture
+
+```mermaid
+flowchart TD
+    classDef prep   fill:#e0f7fa,stroke:#00acc1,stroke-width:2px,color:#004d40
+    classDef rank   fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px,color:#4a148c
+    classDef score  fill:#ede7f6,stroke:#5e35b1,stroke-width:2px,color:#311b92
+    classDef mod    fill:#fff8e1,stroke:#f9a825,stroke-width:2px,color:#e65100
+    classDef decide fill:#fffde7,stroke:#fbc02d,stroke-width:2px,color:#f57f17
+    classDef output fill:#e8f5e9,stroke:#43a047,stroke-width:2px,color:#1b5e20
+
+    subgraph Prep ["🏗️ Phase 1 — Offline Pre-computation  (build_cache.py)"]
+        direction TB
+        P1["100K Candidates\ncandidates.jsonl"]:::prep
+        P2["Extract Features\noffline_utils.py"]:::prep
+        P3["BGE Embedder\nbge-small-en-v1.5\nbatch=256 · CPU"]:::prep
+        P4["features.json\n23 signals per candidate"]:::prep
+        P5["embeddings.npy\n100K × 384 matrix"]:::prep
+        P6["candidate_ids.json\nID-to-index lookup"]:::prep
+
+        P1 --> P2
+        P1 --> P3
+        P2 --> P4
+        P3 --> P5
+        P2 --> P6
+    end
+
+    subgraph Rank ["⚡ Phase 2 — Online Inference  (rank.py · < 8s on CPU)"]
+        direction TB
+        R1["Input: candidates.jsonl"]:::rank
+        R2{"All IDs\nin cache?"}:::decide
+        R3A["CACHED MODE\nLoad cache from RAM"]:::rank
+        R4A["Encode JD with BGE\nnp.dot Cosine similarity"]:::rank
+        R5["Compute Core Score\n55% Semantic + 25% Skill/Exp + 20% Behavioral"]:::score
+        R6["Apply Modifiers\nNotice · Location · Trust"]:::mod
+        R7["Apply Honeypot Penalty\nTimeline contradictions × 0.01"]:::mod
+        R8["Sort & Tie-break\nID ascending order"]:::rank
+        R9["team_srinath.xlsx"]:::output
+
+        R1 --> R2
+        R2 -- "Yes" --> R3A --> R4A --> R5
+        R5 --> R6 --> R7 --> R8 --> R9
+    end
+
+    P4 -. "pre-computed features" .-> R3A
+    P5 -. "embedding matrix"      .-> R3A
+    P6 -. "ID → index map"        .-> R3A
+```
+
 * **Phase 1 — Offline Pre-computation (`build_cache.py`):** Heavy operations (such as text embedding and profiling extraction) are pre-calculated to build static indices. Candidate profiles are encoded using `BAAI/bge-small-en-v1.5` (384 dimensions) with the search query prefix `"Represent this sentence for searching relevant passages: "`.
 * **Phase 2 — Online Inference (`rank.py`):** Operates on the pre-computed files. Loads the model locally, encodes the JD query, and computes Cosine Similarity using vectorized NumPy operations in **under 8 seconds**.
 

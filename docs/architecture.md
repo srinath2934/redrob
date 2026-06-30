@@ -8,51 +8,51 @@ This document details the system design, processing stages, and mathematical for
 
 The ranking pipeline operates as a **lightweight pre-computed similarity and features matcher**. To satisfy the 5-minute compute budget on CPU without internet access or running external database servers, all heavy operations are completed in the pre-computation phase. During the ranking step, the system performs fast vector retrieval using NumPy dot products, applies safety filters, scores candidates using a multi-factor hybrid formula, and resolves ties deterministically.
 
-```
-         [Raw Candidates (100K JSONL)]
-                       │
-                       ▼ (Pre-computation Phase - Run Once)
-             ┌──────────────────────┐
-             │ 1.1-1.2 Feature Prep │ ──> Computes scores, flags fakes & service-only
-             └──────────┬───────────┘
-                       │
-                       ▼
-             ┌──────────────────────┐
-             │ 1.3 BGE Embedding    │ ──> Generates BGE vectors for all 100K candidates
-             └──────────┬───────────┘
-                       │
-                       ▼
-             ┌──────────────────────┐
-             │ 1.4 Save Cache files │ ──> Saves embeddings.npy & features.json to disk
-             └──────────┬───────────┘
+```mermaid
+flowchart TD
+    classDef prep   fill:#e0f7fa,stroke:#00acc1,stroke-width:2px,color:#004d40
+    classDef rank   fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px,color:#4a148c
+    classDef score  fill:#ede7f6,stroke:#5e35b1,stroke-width:2px,color:#311b92
+    classDef mod    fill:#fff8e1,stroke:#f9a825,stroke-width:2px,color:#e65100
+    classDef decide fill:#fffde7,stroke:#fbc02d,stroke-width:2px,color:#f57f17
+    classDef output fill:#e8f5e9,stroke:#43a047,stroke-width:2px,color:#1b5e20
 
-                       │
-                       ▼ (Ranking Step - 5 min Clock)
-             ┌──────────────────────┐
-             │ 2.3-2.5 Similarity   │ ──> Encodes JD; calculates Cosine Similarity
-             │                      │     via NumPy Dot Product (np.dot)
-             └──────────┬───────────┘
-                       │
-                       ▼
-             ┌──────────────────────┐
-             │ 2.7 Natural Filtration │ ──> Traps handled by native math mechanics
-             └──────────┬───────────┘
-                       │
-                       ▼
-             ┌──────────────────────┐
-             │ 2.9 Hybrid Scoring   │ ──> Core: Semantic (55%) + Skill/Exp (25%) +
-             │                      │     Behavioral (20%). Scaled by Title Gate.
-             └──────────┬───────────┘
-                       │
-                       ▼
-             ┌──────────────────────┐
-             │ 2.12 Tie-Breaking    │ ──> Deterministic Candidate ID ascending
-             └──────────┬───────────┘
-                       │
-                       ▼
-             ┌──────────────────────┐
-             │ 2.15 Export Top 100  │ ──> Writes ranked output CSV (with offline reasoning)
-             └──────────────────────┘
+    subgraph Prep ["🏗️ Phase 1 — Offline Pre-computation  (build_cache.py)"]
+        direction TB
+        P1["100K Candidates\ncandidates.jsonl"]:::prep
+        P2["Extract Features\noffline_utils.py"]:::prep
+        P3["BGE Embedder\nbge-small-en-v1.5\nbatch=256 · CPU"]:::prep
+        P4["features.json\n23 signals per candidate"]:::prep
+        P5["embeddings.npy\n100K × 384 matrix"]:::prep
+        P6["candidate_ids.json\nID-to-index lookup"]:::prep
+
+        P1 --> P2
+        P1 --> P3
+        P2 --> P4
+        P3 --> P5
+        P2 --> P6
+    end
+
+    subgraph Rank ["⚡ Phase 2 — Online Inference  (rank.py · < 8s on CPU)"]
+        direction TB
+        R1["Input: candidates.jsonl"]:::rank
+        R2{"All IDs\nin cache?"}:::decide
+        R3A["CACHED MODE\nLoad cache from RAM"]:::rank
+        R4A["Encode JD with BGE\nnp.dot Cosine similarity"]:::rank
+        R5["Compute Core Score\n55% Semantic + 25% Skill/Exp + 20% Behavioral"]:::score
+        R6["Apply Modifiers\nNotice · Location · Trust"]:::mod
+        R7["Apply Honeypot Penalty\nTimeline contradictions × 0.01"]:::mod
+        R8["Sort & Tie-break\nID ascending order"]:::rank
+        R9["team_srinath.xlsx"]:::output
+
+        R1 --> R2
+        R2 -- "Yes" --> R3A --> R4A --> R5
+        R5 --> R6 --> R7 --> R8 --> R9
+    end
+
+    P4 -. "pre-computed features" .-> R3A
+    P5 -. "embedding matrix"      .-> R3A
+    P6 -. "ID → index map"        .-> R3A
 ```
 
 ---
